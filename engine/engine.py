@@ -13,6 +13,7 @@ from engine.events import EventManager
 from engine.world import Building, BuildingType, Resource, WorldGrid
 from learning.learner import AgentLearner, SocialLearner, KnowledgeSharer
 from learning.knowledge import SharedKnowledge
+from learning.rewards import RewardShaper, snapshot_agent
 
 
 AGENT_NAMES = [
@@ -48,7 +49,11 @@ class SimulationEngine:
         self.social_learner = SocialLearner(seed=seed)
         self.knowledge_sharer = KnowledgeSharer(seed=seed)
         self.shared_knowledge = SharedKnowledge()
+        self.reward_shaper = RewardShaper(
+            gamma=config.get("learning", {}).get("discount_factor", 0.95),
+        )
         self._init_learners(config.get("learning", {}))
+        self._agent_snapshots: dict[str, dict] = {}  # pre-action state snapshots
 
         # Stats tracking
         self.tick_log: list[dict] = []
@@ -100,6 +105,11 @@ class SimulationEngine:
 
         # Phase 1: Perception
         self._phase_perceive()
+
+        # Phase 1.5: Snapshot agent states for reward shaping
+        for agent in self.agents.values():
+            if agent.is_alive:
+                self._agent_snapshots[agent.id] = snapshot_agent(agent)
 
         # Phase 2: Decision
         actions = self._phase_decide()
@@ -316,11 +326,25 @@ class SimulationEngine:
             if agent.last_action and agent.last_action.type == ActionType.IDLE:
                 agent.receive_reward(-1.0)
 
-        # Update Q-values for all agents
+        # Update Q-values with shaped rewards
         for agent in self.agents.values():
             learner = self.learners.get(agent.id)
-            if learner:
-                learner.update(agent, agent.last_reward)
+            if not learner:
+                continue
+
+            base_reward = agent.last_reward
+            snap = self._agent_snapshots.get(agent.id)
+
+            if snap:
+                # Add context bonus based on action appropriateness
+                action_name = agent.last_action.type.value if agent.last_action else "idle"
+                context_bonus = self.reward_shaper.compute_context_bonus(agent, action_name)
+                # Apply potential-based shaping
+                shaped_reward = self.reward_shaper.shape(snap, agent, base_reward + context_bonus)
+            else:
+                shaped_reward = base_reward
+
+            learner.update(agent, shaped_reward)
 
         # Social learning every 10 ticks
         if self.clock.tick % 10 == 0:
