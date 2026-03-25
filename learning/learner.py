@@ -7,6 +7,7 @@ from typing import Optional
 
 from agents.agent import Action, ActionType, Agent
 from learning.memory import AgentMemory
+from learning.replay import PrioritizedReplayBuffer
 
 
 def discretize_state(agent: Agent) -> tuple:
@@ -50,6 +51,9 @@ class AgentLearner:
         epsilon_start: float = 0.3,
         epsilon_decay: float = 0.995,
         epsilon_min: float = 0.01,
+        replay_capacity: int = 500,
+        replay_batch_size: int = 16,
+        replay_every: int = 5,
         seed: int = 42,
     ):
         self.agent_id = agent_id
@@ -62,8 +66,19 @@ class AgentLearner:
         self._rng = random.Random(seed)
         self.memory = AgentMemory()
 
+        # Experience replay
+        self.replay_buffer = PrioritizedReplayBuffer(capacity=replay_capacity, seed=seed)
+        self.replay_batch_size = replay_batch_size
+        self.replay_every = replay_every
+
+        # Learning rate scheduling
+        self._base_learning_rate = learning_rate
+        self._lr_decay = 0.9999
+        self._lr_min = 0.001
+
         # Tracking
         self.total_updates = 0
+        self.replay_updates = 0
         self.last_state: Optional[tuple] = None
         self.last_action: Optional[ActionType] = None
 
@@ -93,7 +108,7 @@ class AgentLearner:
         return action
 
     def update(self, agent: Agent, reward: float):
-        """Update Q-values based on reward received."""
+        """Update Q-values based on reward received, then replay past experiences."""
         if self.last_state is None or self.last_action is None:
             return
 
@@ -101,18 +116,19 @@ class AgentLearner:
         action = self.last_action.value
         next_state = discretize_state(agent)
 
-        # Q-learning update
-        current_q = self.q_table.setdefault(current_state, {}).get(action, 0.0)
-        next_q_values = self.q_table.get(next_state, {})
-        next_max = max(next_q_values.values(), default=0.0)
+        # Q-learning update for current transition
+        new_q = self._update_q(current_state, action, reward, next_state)
 
-        new_q = current_q + self.learning_rate * (
-            reward + self.discount_factor * next_max - current_q
-        )
-        self.q_table[current_state][action] = new_q
+        # Store transition in replay buffer
+        self.replay_buffer.push(current_state, action, reward, next_state, agent.age)
 
-        # Decay exploration
+        # Periodic experience replay
+        if self.total_updates % self.replay_every == 0 and len(self.replay_buffer) >= self.replay_batch_size:
+            self._replay()
+
+        # Decay exploration and learning rate
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        self.learning_rate = max(self._lr_min, self.learning_rate * self._lr_decay)
         self.total_updates += 1
 
         # Record in memory
@@ -128,6 +144,28 @@ class AgentLearner:
             },
             importance=importance,
         )
+
+    def _update_q(self, state: tuple, action: str, reward: float, next_state: tuple) -> float:
+        """Single Q-value update. Returns the new Q-value."""
+        current_q = self.q_table.setdefault(state, {}).get(action, 0.0)
+        next_q_values = self.q_table.get(next_state, {})
+        next_max = max(next_q_values.values(), default=0.0)
+
+        new_q = current_q + self.learning_rate * (
+            reward + self.discount_factor * next_max - current_q
+        )
+        self.q_table[state][action] = new_q
+        return new_q
+
+    def _replay(self):
+        """Replay a batch of past experiences to accelerate learning."""
+        batch = self.replay_buffer.sample(self.replay_batch_size)
+        for transition in batch:
+            self._update_q(
+                transition.state, transition.action,
+                transition.reward, transition.next_state,
+            )
+        self.replay_updates += len(batch)
 
     def _get_available_actions(self, agent: Agent) -> list[ActionType]:
         """Filter actions based on what's actually possible."""
@@ -206,6 +244,8 @@ class AgentLearner:
         return {
             "q_table_size": len(self.q_table),
             "total_updates": self.total_updates,
+            "replay_updates": self.replay_updates,
+            "replay_buffer_size": len(self.replay_buffer),
             "epsilon": round(self.epsilon, 4),
             "memory_size": {
                 "working": len(self.memory.working),

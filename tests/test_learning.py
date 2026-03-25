@@ -7,6 +7,8 @@ from agents.agent import Agent, ActionType
 from learning.learner import AgentLearner, discretize_state, SocialLearner
 from learning.memory import AgentMemory, MemoryEntry, WorkingMemory, ShortTermMemory, LongTermMemory
 from learning.skills import SkillSystem
+from learning.replay import ReplayBuffer, PrioritizedReplayBuffer
+from learning.rewards import RewardShaper, snapshot_agent
 
 
 # --- Memory Tests ---
@@ -179,3 +181,148 @@ def test_social_learner():
     )
     # Observer should have picked up some Q-values
     assert len(obs_learner.q_table) > 0 or len(obs_learner.memory.short_term) > 0
+
+
+# --- Replay Buffer Tests ---
+
+def test_replay_buffer_push_and_sample():
+    buf = ReplayBuffer(capacity=50, seed=42)
+    for i in range(20):
+        buf.push(("s", i), "move", float(i), ("s", i + 1), tick=i)
+    assert len(buf) == 20
+    batch = buf.sample(5)
+    assert len(batch) == 5
+
+
+def test_replay_buffer_capacity():
+    buf = ReplayBuffer(capacity=10, seed=42)
+    for i in range(25):
+        buf.push(("s",), "act", 1.0, ("s2",), tick=i)
+    assert len(buf) == 10
+
+
+def test_replay_buffer_sample_larger_than_size():
+    buf = ReplayBuffer(capacity=100, seed=42)
+    for i in range(3):
+        buf.push(("s",), "act", 1.0, ("s2",), tick=i)
+    batch = buf.sample(10)
+    assert len(batch) == 3
+
+
+def test_prioritized_replay_prefers_high_reward():
+    buf = PrioritizedReplayBuffer(capacity=100, alpha=1.0, seed=42)
+    # Add 1 high-reward and 99 low-reward transitions
+    buf.push(("high",), "act", 10.0, ("next",), tick=0)
+    for i in range(99):
+        buf.push(("low", i), "act", 0.01, ("next",), tick=i + 1)
+    # Sample many batches and count how often "high" state appears
+    high_count = 0
+    for _ in range(100):
+        batch = buf.sample(10)
+        for t in batch:
+            if t.state == ("high",):
+                high_count += 1
+    # High-reward transition should appear much more than 10% of samples
+    assert high_count > 50
+
+
+def test_learner_replay_integration():
+    agent = Agent("Test", 0, 0)
+    agent.perception = {"nearby_agents": [], "tiles": [], "time_of_day": "morning"}
+    learner = AgentLearner("test-id", replay_every=1, replay_batch_size=2, seed=42)
+    # Run enough updates to trigger replay
+    for _ in range(10):
+        learner.choose_action(agent)
+        learner.update(agent, reward=1.0)
+    assert learner.replay_updates > 0
+    assert len(learner.replay_buffer) == 10
+    stats = learner.get_stats()
+    assert "replay_updates" in stats
+    assert "replay_buffer_size" in stats
+
+
+# --- Reward Shaping Tests ---
+
+def test_reward_shaper_potential():
+    shaper = RewardShaper()
+    agent = Agent("Test", 0, 0)
+    agent.energy = 80.0
+    agent.coins = 100
+    agent.mood = 0.7
+    p = shaper.potential(agent)
+    assert p > 0  # healthy agent should have positive potential
+
+
+def test_reward_shaper_low_energy_penalty():
+    shaper = RewardShaper()
+    healthy = Agent("Healthy", 0, 0)
+    healthy.energy = 80.0
+    dying = Agent("Dying", 0, 0)
+    dying.energy = 5.0
+    assert shaper.potential(healthy) > shaper.potential(dying)
+
+
+def test_reward_shaper_shape():
+    shaper = RewardShaper(gamma=0.95)
+    agent = Agent("Test", 0, 0)
+    agent.energy = 50.0
+    agent.coins = 50
+    snap = snapshot_agent(agent)
+    # Agent improves
+    agent.energy = 70.0
+    agent.coins = 60
+    shaped = shaper.shape(snap, agent, base_reward=1.0)
+    # Shaped reward should be > base because agent improved
+    assert shaped > 1.0
+
+
+def test_reward_shaper_shape_decline():
+    shaper = RewardShaper(gamma=0.95)
+    agent = Agent("Test", 0, 0)
+    agent.energy = 80.0
+    agent.coins = 100
+    snap = snapshot_agent(agent)
+    # Agent declines
+    agent.energy = 30.0
+    agent.coins = 20
+    shaped = shaper.shape(snap, agent, base_reward=1.0)
+    # Shaped reward should be < base because agent declined
+    assert shaped < 1.0
+
+
+def test_snapshot_agent():
+    agent = Agent("Test", 0, 0)
+    agent.energy = 75.0
+    agent.coins = 42
+    agent.inventory.add("food", 3)
+    snap = snapshot_agent(agent)
+    assert snap["energy"] == 75.0
+    assert snap["coins"] == 42
+    assert snap["inventory_total"] == 3
+
+
+def test_context_bonus_rest_when_tired():
+    shaper = RewardShaper()
+    agent = Agent("Test", 0, 0)
+    agent.energy = 10.0
+    bonus = shaper.compute_context_bonus(agent, "rest")
+    assert bonus > 0
+
+
+def test_context_bonus_work_when_tired_penalized():
+    shaper = RewardShaper()
+    agent = Agent("Test", 0, 0)
+    agent.energy = 10.0
+    bonus = shaper.compute_context_bonus(agent, "work")
+    assert bonus < 0
+
+
+def test_learner_lr_decay():
+    agent = Agent("Test", 0, 0)
+    agent.perception = {"nearby_agents": [], "tiles": [], "time_of_day": "morning"}
+    learner = AgentLearner("test-id", learning_rate=0.1, seed=42)
+    initial_lr = learner.learning_rate
+    for _ in range(100):
+        learner.choose_action(agent)
+        learner.update(agent, reward=1.0)
+    assert learner.learning_rate < initial_lr
