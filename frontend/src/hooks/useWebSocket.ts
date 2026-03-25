@@ -15,6 +15,8 @@ export function useWebSocket(url: string) {
     ws.onopen = () => {
       store.getState().setConnected(true);
       console.log('[WS] Connected to simulation server');
+      // Auto-start the simulation
+      ws.send(JSON.stringify({ command: 'play' }));
     };
 
     ws.onclose = () => {
@@ -33,14 +35,85 @@ export function useWebSocket(url: string) {
         const state = store.getState();
 
         switch (msg.type) {
-          case 'tick':
+          case 'init': {
+            // Initial state from backend
+            const agents = msg.state?.agents;
+            if (agents) {
+              const agentList = Object.values(agents).map((a: any) => ({
+                id: a.id, x: a.x, y: a.y,
+                profession: a.profession ?? a.state ?? 'idle',
+                action: a.state ?? 'idle',
+                health: a.energy ?? 100,
+                name: a.name ?? 'Agent',
+              }));
+              state.updateAgents(agentList);
+            }
+            break;
+          }
+
+          case 'tick': {
+            // Tick messages contain agent_deltas, events, metrics
+            const metrics = msg.metrics ?? {};
             state.updateTick(
               msg.tick,
               msg.season ?? state.season,
-              msg.population ?? state.metrics.population,
-              msg.gdp ?? state.metrics.gdp,
+              metrics.population ?? state.metrics.population,
+              metrics.coins ?? metrics.gdp ?? state.metrics.gdp,
             );
+
+            // Extract agents from agent_deltas
+            if (msg.agent_deltas && msg.agent_deltas.length > 0) {
+              const currentAgents = [...state.agents];
+              for (const delta of msg.agent_deltas) {
+                if (delta.removed) {
+                  const idx = currentAgents.findIndex(a => a.id === delta.id);
+                  if (idx >= 0) currentAgents.splice(idx, 1);
+                  continue;
+                }
+                const existing = currentAgents.findIndex(a => a.id === delta.id);
+                const agentData = {
+                  id: delta.id,
+                  x: delta.x,
+                  y: delta.y,
+                  profession: delta.profession ?? delta.state ?? 'idle',
+                  action: delta.state ?? 'idle',
+                  health: delta.energy ?? 100,
+                  name: delta.name ?? 'Agent',
+                };
+                if (existing >= 0) {
+                  currentAgents[existing] = agentData;
+                } else {
+                  currentAgents.push(agentData);
+                }
+              }
+              state.updateAgents(currentAgents);
+            }
+
+            // Extract events
+            if (msg.events && msg.events.length > 0) {
+              for (const evt of msg.events) {
+                state.addEvent({
+                  type: evt.type ?? evt.event_type ?? 'info',
+                  description: evt.description ?? evt.message ?? JSON.stringify(evt),
+                  tick: msg.tick,
+                });
+              }
+            }
+
+            // Update metrics
+            if (metrics.population !== undefined) {
+              state.updateMetrics({
+                population: metrics.population ?? 0,
+                gdp: metrics.coins ?? metrics.gdp ?? 0,
+                unemployment: metrics.unemployment ?? 0,
+                avgWage: metrics.avg_wage ?? metrics.avgWage ?? 0,
+                gini: metrics.gini ?? 0,
+                tick: msg.tick,
+                season: msg.season ?? state.season,
+              });
+            }
             break;
+          }
 
           case 'agents':
             state.updateAgents(msg.agents ?? msg.data ?? []);
