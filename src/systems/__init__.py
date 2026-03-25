@@ -7,3 +7,5 @@ from .agent_cognition import AgentCognitionSystem
 from .production import ProductionUpdateSystem
 from .death import DeathSystem
 from .status_reporter import StatusReporterSystem
+from .reproduction import ReproductionSystem
+from .profession_assignment import ProfessionAssignmentSystem

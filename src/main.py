@@ -90,10 +90,24 @@ def main() -> None:
             ))
 
     try:
+        from .systems import (
+            NeedDecaySystem, AgentCognitionSystem, ProductionUpdateSystem,
+            DeathSystem, StatusReporterSystem, ReproductionSystem,
+            ProfessionAssignmentSystem,
+        )
+        engine.register_system("need_decay", 1, NeedDecaySystem())
+        engine.register_system("cognition", 1, AgentCognitionSystem())
+        engine.register_system("production", 10, ProductionUpdateSystem())
+        engine.register_system("profession_assignment", 100, ProfessionAssignmentSystem())
+        engine.register_system("death", 100, DeathSystem())
+        engine.register_system("status_reporter", 100, StatusReporterSystem())
+        engine.register_system("reproduction", 1000, ReproductionSystem())
+        print(f"✅ 7 simulation systems registered")
+    except Exception as e:
+        print(f"⚠️  Could not register all systems: {e}")
+        # Fallback to inline systems
         engine.register_system("need_decay", 1, NeedDecaySystem())
         engine.register_system("status_reporter", 10, StatusReporter())
-    except Exception as e:
-        print(f"⚠️  Could not register systems: {e}")
 
     # Run simulation
     print(f"\n🚀 Starting simulation...\n")
