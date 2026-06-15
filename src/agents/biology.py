@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-
 # Lifecycle stage thresholds (in ticks)
 CHILD_MAX_TICKS: int = 2000
 ADOLESCENT_MAX_TICKS: int = 4000
@@ -112,4 +111,42 @@ class AgentBiology:
             fertility=new_fertility,
             is_alive=new_is_alive,
             cause_of_death=new_cause if not new_is_alive else self.cause_of_death,
+        )
+
+    def with_health(self, health: float, cause: str = "starvation") -> AgentBiology:
+        """Return a new biology state with health set to a clamped value.
+
+        Health is clamped to [0, max_health]. If it reaches zero the agent
+        is marked dead with the given cause.
+
+        Args:
+            health: The new health value before clamping.
+            cause: Cause of death recorded if health hits zero.
+
+        Returns:
+            A new AgentBiology with updated health and liveness.
+        """
+        new_health = max(0.0, min(health, self.max_health))
+        is_alive = new_health > 0.0
+        return replace(
+            self,
+            health=new_health,
+            is_alive=is_alive,
+            cause_of_death=self.cause_of_death if is_alive else cause,
+        )
+
+    def die(self, cause: str) -> AgentBiology:
+        """Return a new biology state marking the agent as dead.
+
+        Args:
+            cause: Reason for death (e.g. 'starvation', 'old_age', 'illness').
+
+        Returns:
+            A new AgentBiology with health 0, is_alive False, and cause set.
+        """
+        return replace(
+            self,
+            health=0.0,
+            is_alive=False,
+            cause_of_death=cause,
         )

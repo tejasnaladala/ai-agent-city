@@ -1,9 +1,10 @@
 """Event bus for simulation-wide event dispatch and handling."""
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Callable, Any
+
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)

@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..engine.world_state import WorldState
     from ..engine.event_bus import EventBus
+    from ..engine.world_state import WorldState
 
 
 @dataclass
@@ -101,10 +101,12 @@ class AgentLearnerState:
 def discretize_agent_state(agent) -> tuple:
     """Convert immutable Agent into a discrete state tuple for Q-table lookup."""
     needs = agent.needs
+    health = agent.biology.health
+    cash = agent.economy.cash
     food_level = "low" if needs.food < 0.3 else "mid" if needs.food < 0.7 else "high"
     rest_level = "low" if needs.rest < 0.3 else "mid" if needs.rest < 0.7 else "high"
-    health_level = "low" if agent.biology.health < 0.3 else "mid" if agent.biology.health < 0.7 else "high"
-    wealth_level = "poor" if agent.economy.cash < 50 else "mid" if agent.economy.cash < 200 else "rich"
+    health_level = "low" if health < 0.3 else "mid" if health < 0.7 else "high"
+    wealth_level = "poor" if cash < 50 else "mid" if cash < 200 else "rich"
     employed = agent.economy.employer_id is not None
     has_partner = agent.social.partner_id is not None
     lifecycle = agent.biology.lifecycle_stage
@@ -228,16 +230,11 @@ class LearningSystem:
                 q_vals = learner.q_table.get(current_state, {})
                 chosen = max(actions, key=lambda a: q_vals.get(a, 0.0))
 
+            # The chosen action is held on the learner (learner.last_action)
+            # and read back by the learner on the next reward update. The
+            # cognition system reacts to needs directly, so the action label
+            # does not need to be written onto the immutable goal tree here.
             learner.last_action = chosen
-
-            # Update agent's immediate goal based on learning
-            # (the cognition system will pick this up)
-            if agent.goals.immediate != [chosen]:
-                new_goals = agent.goals._replace(immediate=[chosen]) if hasattr(agent.goals, '_replace') else agent.goals
-                try:
-                    world.agents[agent_id] = agent.with_goals(new_goals)
-                except Exception:
-                    pass  # Goals might not support direct update in all cases
 
         # Capture fresh snapshots for next cycle
         self.capture_snapshots(world)
@@ -247,9 +244,12 @@ class LearningSystem:
             avg_epsilon = 0.0
             avg_q_size = 0.0
             count = len(self.learners)
+            avg_epsilon = 0.0
+            avg_q_size = 0.0
             if count > 0:
-                avg_epsilon = sum(l.epsilon for l in self.learners.values()) / count
-                avg_q_size = sum(len(l.q_table) for l in self.learners.values()) / count
+                learners = self.learners.values()
+                avg_epsilon = sum(lr.epsilon for lr in learners) / count
+                avg_q_size = sum(len(lr.q_table) for lr in learners) / count
 
             event_bus.emit(Event(
                 tick=tick,
@@ -258,7 +258,9 @@ class LearningSystem:
                     "avg_epsilon": round(avg_epsilon, 4),
                     "avg_q_table_size": round(avg_q_size, 1),
                     "total_learners": count,
-                    "total_replay_entries": sum(len(l.replay) for l in self.learners.values()),
+                    "total_replay_entries": sum(
+                        len(lr.replay) for lr in self.learners.values()
+                    ),
                 },
             ))
 

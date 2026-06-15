@@ -10,7 +10,13 @@ from src.world.environment import (
     EnvironmentSystem,
     WorldEvent,
 )
-from src.world.resources import RESOURCES, get_recipe, get_resource, get_spoil_ticks, resources_by_category
+from src.world.resources import (
+    RESOURCES,
+    get_recipe,
+    get_resource,
+    get_spoil_ticks,
+    resources_by_category,
+)
 from src.world.tile import TERRAIN_TYPES, ZONE_TYPES, Tile
 from src.world.world_map import WorldMap
 

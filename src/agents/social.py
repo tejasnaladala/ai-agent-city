@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,3 +38,13 @@ class AgentSocial:
             raise ValueError(
                 f"Invalid social_class: {self.social_class!r}"
             )
+
+    def with_partner(self, partner_id: str) -> AgentSocial:
+        """Return a new social state paired with the given partner."""
+        return replace(self, partner_id=partner_id)
+
+    def with_child(self, child_id: str) -> AgentSocial:
+        """Return a new social state with a child appended to the kinship list."""
+        if child_id in self.children_ids:
+            return self
+        return replace(self, children_ids=self.children_ids + (child_id,))

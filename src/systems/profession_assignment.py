@@ -1,12 +1,13 @@
 """Profession assignment — unemployed agents find jobs. Every 100 ticks."""
 
 from __future__ import annotations
+
 import random
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..engine.world_state import WorldState
     from ..engine.event_bus import EventBus
+    from ..engine.world_state import WorldState
 
 # Available professions and their requirements
 PROFESSIONS = {
@@ -42,9 +43,9 @@ class ProfessionAssignmentSystem:
         for agent in unemployed:
             best_profession = self._choose_profession(agent, world)
             if best_profession:
-                new_econ = agent.economy.set_profession(
+                new_econ = agent.economy.with_profession(
                     best_profession,
-                    PROFESSIONS[best_profession]["wage"]
+                    PROFESSIONS[best_profession]["wage"],
                 )
                 new_agent = agent.with_economy(new_econ)
                 world.agents[agent.identity.agent_id] = new_agent

@@ -15,13 +15,14 @@ from micro-scale agent decisions.
 
 ## What Makes It Non-Trivial
 
-| Comparison | AI Agent City difference |
-|-----------|------------------------|
-| NPC simulations (Skyrim, GTA) | NPCs follow behavior trees. Our agents have real memory, adaptive goals, and economic causality. |
-| Sims-like games | Sims uses scripted need satisfaction. We have emergent labor markets, price discovery, and generational knowledge transfer. |
-| LLM roleplay towns (Smallville) | Smallville agents chat but don't produce real economic output. Our agents' work has causal consequences — a farmer who doesn't farm causes food scarcity. |
-| Simple multi-agent sandboxes (AutoGen, CrewAI) | Those coordinate task completion. We simulate persistent lives across time with births, deaths, and civilization-scale dynamics. |
-| Agent frameworks with no economy | Most frameworks lack resource scarcity, price signals, and labor markets. We treat economics as a first-class simulation substrate, not decoration. |
+The design goal is causal economics rather than scripted behavior. A few properties
+distinguish it from common alternatives:
+
+- Agents carry memory and adaptive goals instead of fixed behavior trees.
+- Need satisfaction is not scripted; it flows from a labor market with price discovery.
+- An agent's work has consequences. A farmer who does not farm contributes to food scarcity.
+- Lives are persistent across time, with births, deaths, and trait inheritance.
+- Resource scarcity, price signals, and a labor market are part of the simulation substrate, not cosmetic.
 
 ## Core Properties
 

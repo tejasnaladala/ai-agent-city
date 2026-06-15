@@ -8,17 +8,13 @@ from src.agents import (
     AgentCognition,
     AgentEconomy,
     AgentGoals,
-    AgentIdentity,
     AgentNeeds,
     AgentPersonality,
     AgentSkills,
-    AgentSocial,
-    Goal,
     Plan,
     PlanStep,
     SkillSystem,
 )
-from src.agents.cognition import Action
 from src.agents.factory import create_founder_population
 
 

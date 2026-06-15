@@ -7,10 +7,9 @@ import uuid
 import pytest
 
 from src.economy.indicators import EconomicIndicators, compute_indicators
-from src.economy.labor import Firm, JobPosting, LaborMarket
+from src.economy.labor import Firm, LaborMarket
 from src.economy.ledger import Ledger, Transaction
 from src.economy.market import Order, OrderBookMarket
-
 
 # ===================================================================
 # Fixtures

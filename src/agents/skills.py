@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-
 # Skill system constants
 SKILL_DECAY_RATE: float = 0.0001
 SKILL_GAIN_BASE: float = 0.0005

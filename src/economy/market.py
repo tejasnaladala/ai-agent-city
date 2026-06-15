@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from src.economy.ledger import Transaction
 from src.world.resources import RESOURCES
 
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------

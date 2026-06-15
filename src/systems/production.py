@@ -1,11 +1,12 @@
 """Production system — firms produce goods using workers. Runs every 10 ticks."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..engine.world_state import WorldState
     from ..engine.event_bus import EventBus
+    from ..engine.world_state import WorldState
 
 
 class ProductionUpdateSystem:

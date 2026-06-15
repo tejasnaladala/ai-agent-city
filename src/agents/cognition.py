@@ -65,20 +65,23 @@ class AgentCognition:
     def _reactive(self, agent: Agent) -> list[Action] | None:
         """Pure symbolic -- thresholds and lookup tables.
 
-        Checks critical needs and returns immediate actions if any
-        need falls below its emergency threshold.
+        Checks critical needs and returns immediate actions for EVERY need
+        below its emergency threshold. Returning all urgent actions (rather
+        than only the most urgent) lets an agent address hunger and thirst
+        in the same tick, instead of one need permanently starving the other.
         """
+        urgent: list[Action] = []
         if agent.needs.safety < 0.2:
-            return [Action("flee_danger", priority=0.99)]
-        if agent.needs.water < 0.1:
-            return [Action("find_water", priority=0.98)]
+            urgent.append(Action("flee_danger", priority=0.99))
+        if agent.needs.water < 0.2:
+            urgent.append(Action("find_water", priority=0.98))
         if agent.needs.health < 0.2:
-            return [Action("seek_medical", priority=0.95)]
-        if agent.needs.food < 0.1:
-            return [Action("find_food", priority=1.0)]
-        if agent.needs.rest < 0.1:
-            return [Action("go_home_sleep", priority=0.9)]
-        return None
+            urgent.append(Action("seek_medical", priority=0.95))
+        if agent.needs.food < 0.2:
+            urgent.append(Action("find_food", priority=1.0))
+        if agent.needs.rest < 0.15:
+            urgent.append(Action("go_home_sleep", priority=0.9))
+        return urgent or None
 
     def _deliberate(self, agent: Agent, tick: int) -> None:
         """Evaluate goals and pick plans from known repertoire.
@@ -115,8 +118,8 @@ class AgentCognition:
         go to work if employed, wander if not.
         """
         if agent.goals.active_plan is None:
-            if agent.economy.employer_id:
-                return [Action("go_to_work", target=agent.economy.employer_id)]
+            if agent.economy.profession is not None:
+                return [Action("go_to_work", target=agent.economy.employer_id or "")]
             return [Action("wander")]
 
         plan = agent.goals.active_plan

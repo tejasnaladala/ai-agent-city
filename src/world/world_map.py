@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import heapq
 import math
-from dataclasses import dataclass, replace
 
 from src.world.district import District
 from src.world.tile import Tile
-
 
 # ---------------------------------------------------------------------------
 # Movement cost table (terrain -> base cost in ticks)
@@ -126,7 +124,7 @@ class WorldMap:
         g_score: dict[tuple[int, int], float] = {(sx, sy): 0.0}
 
         # 8-directional neighbours
-        _DIRS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+        dirs = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
         while open_set:
             _, _, cx, cy = heapq.heappop(open_set)
@@ -141,7 +139,7 @@ class WorldMap:
                 path.reverse()
                 return path
 
-            for ddx, ddy in _DIRS:
+            for ddx, ddy in dirs:
                 nx, ny = cx + ddx, cy + ddy
                 if not self.in_bounds(nx, ny):
                     continue

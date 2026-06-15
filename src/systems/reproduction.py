@@ -1,12 +1,13 @@
 """Reproduction system — agents form partnerships and have children. Every 1000 ticks."""
 
 from __future__ import annotations
+
 import random
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..engine.world_state import WorldState
     from ..engine.event_bus import EventBus
+    from ..engine.world_state import WorldState
 
 
 class ReproductionSystem:
@@ -34,8 +35,8 @@ class ReproductionSystem:
             a, b = singles[i], singles[i + 1]
             if self._compatible(a, b):
                 # Form partnership
-                new_a = a.with_social(a.social.set_partner(b.identity.agent_id))
-                new_b = b.with_social(b.social.set_partner(a.identity.agent_id))
+                new_a = a.with_social(a.social.with_partner(b.identity.agent_id))
+                new_b = b.with_social(b.social.with_partner(a.identity.agent_id))
                 world.agents[a.identity.agent_id] = new_a
                 world.agents[b.identity.agent_id] = new_b
 
@@ -66,8 +67,8 @@ class ReproductionSystem:
                 world.agents[child.identity.agent_id] = child
 
                 # Update parents
-                new_pa = parent_a.with_social(parent_a.social.add_child(child.identity.agent_id))
-                new_pb = partner.with_social(partner.social.add_child(child.identity.agent_id))
+                new_pa = parent_a.with_social(parent_a.social.with_child(child.identity.agent_id))
+                new_pb = partner.with_social(partner.social.with_child(child.identity.agent_id))
                 world.agents[parent_a.identity.agent_id] = new_pa
                 world.agents[partner.identity.agent_id] = new_pb
 

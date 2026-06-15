@@ -6,10 +6,11 @@ Follows the tiered update schedule from the architecture doc.
 """
 
 from __future__ import annotations
+
 import time
 from typing import Any
 
-from .event_bus import EventBus, Event
+from .event_bus import Event, EventBus
 from .world_state import WorldState
 
 

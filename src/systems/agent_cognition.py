@@ -1,11 +1,13 @@
 """Agent cognition system — runs every tick, dispatches tiered thinking."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..engine.world_state import WorldState
+    from ..agents.cognition import Action
     from ..engine.event_bus import EventBus
+    from ..engine.world_state import WorldState
 
 
 class AgentCognitionSystem:
@@ -18,8 +20,7 @@ class AgentCognitionSystem:
         self._learning_system = learning_system
 
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
-        from ..agents.cognition import AgentCognition, Action
-        from ..engine.event_bus import Event
+        from ..agents.cognition import AgentCognition
 
         cognition = AgentCognition(learning_system=self._learning_system)
 
@@ -78,7 +79,7 @@ class AgentCognitionSystem:
                 from ..agents.skills import SkillSystem
                 skill_system = SkillSystem()
                 new_skills = skill_system.practice(agent.skills, profession, intensity=1.0)
-                new_econ = agent.economy  # Wage paid by production system
+                # Wages are paid by the production system, not here.
                 new_agent = agent.with_skills(new_skills)
                 world.agents[agent_id] = new_agent
 
@@ -91,6 +92,6 @@ class AgentCognitionSystem:
         elif action.action_type == "seek_medical":
             # Heal if hospital exists
             new_agent = agent.with_needs(agent.needs.satisfy("health", 0.1))
-            new_bio = agent.biology.with_health(min(agent.biology.health + 0.05, agent.biology.max_health))
-            new_agent = new_agent.with_biology(new_bio)
+            healed = min(agent.biology.health + 0.05, agent.biology.max_health)
+            new_agent = new_agent.with_biology(agent.biology.with_health(healed))
             world.agents[agent_id] = new_agent

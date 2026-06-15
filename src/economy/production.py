@@ -7,7 +7,6 @@ from typing import Any
 from src.world.building import BUILDING_TYPES, Building
 from src.world.resources import RESOURCES
 
-
 # ---------------------------------------------------------------------------
 # Building-type to profession mapping
 # ---------------------------------------------------------------------------

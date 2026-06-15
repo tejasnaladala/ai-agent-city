@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
+from dataclasses import dataclass, replace
 
 # Rough per-asset value estimate for net worth calculation
 ESTIMATED_ASSET_VALUE: float = 100.0
@@ -58,3 +57,38 @@ class AgentEconomy:
             True if cash >= amount.
         """
         return self.cash >= amount
+
+    def add_cash(self, amount: float) -> AgentEconomy:
+        """Return a new economy state with cash adjusted by ``amount``.
+
+        Args:
+            amount: Cash to add (positive) or remove (negative). The result
+                is floored at zero so cash never goes negative.
+
+        Returns:
+            A new AgentEconomy with updated cash.
+        """
+        return replace(self, cash=max(0.0, self.cash + amount))
+
+    def with_profession(
+        self,
+        profession: str,
+        wage: float,
+        employer_id: str | None = None,
+    ) -> AgentEconomy:
+        """Return a new economy state with the agent employed in a profession.
+
+        Args:
+            profession: The profession name to assign.
+            wage: Per-tick income from the new role.
+            employer_id: ID of the employing firm, if any.
+
+        Returns:
+            A new AgentEconomy with profession, wage, and employer set.
+        """
+        return replace(
+            self,
+            profession=profession,
+            wage=wage,
+            employer_id=employer_id,
+        )

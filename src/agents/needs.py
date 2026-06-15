@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
 
-
 # Decay rates per tick for each need
 FOOD_DECAY: float = 0.002
 WATER_DECAY: float = 0.003
