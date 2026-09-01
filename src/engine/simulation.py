@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import random
 import time
-from typing import Any
+from typing import Any, NoReturn
 
 from .event_bus import Event, EventBus
 from .world_state import WorldState
@@ -130,7 +130,24 @@ class SimulationEngine:
         tick = self.world.current_tick
         candidate_world = self._copy_world_for_tick()
         module_random_state = random.getstate()
-        system_checkpoints = self._capture_system_checkpoints(tick)
+        system_checkpoints: list[tuple[str, Any, Any]] = []
+        for name, frequency, system in self._systems:
+            if tick % frequency != 0:
+                continue
+            snapshot = getattr(system, "snapshot_state", None)
+            if callable(snapshot):
+                try:
+                    checkpoint = snapshot()
+                except Exception as error:
+                    self._abort_tick(
+                        tick=tick,
+                        system_name=name,
+                        error=error,
+                        checkpoints=system_checkpoints,
+                        module_random_state=module_random_state,
+                        phase="checkpoint",
+                    )
+                system_checkpoints.append((name, system, checkpoint))
         staged_events = _BufferedEventBus()
 
         # Emit tick start event
@@ -145,18 +162,14 @@ class SimulationEngine:
             if tick % frequency == 0:
                 try:
                     system.update(candidate_world, tick, staged_events)
-                except Exception as e:
-                    self._restore_system_checkpoints(system_checkpoints)
-                    random.setstate(module_random_state)
-                    self._running = False
-                    self.event_bus.emit(Event(
+                except Exception as error:
+                    self._abort_tick(
                         tick=tick,
-                        event_type="system.error",
-                        data={"system": name, "error": str(e)},
-                    ))
-                    raise SimulationSystemError(
-                        f"System {name!r} failed at tick {tick}: {e}"
-                    ) from e
+                        system_name=name,
+                        error=error,
+                        checkpoints=system_checkpoints,
+                        module_random_state=module_random_state,
+                    )
 
         # Emit tick end event
         staged_events.emit(Event(
@@ -183,17 +196,6 @@ class SimulationEngine:
         if tick % 10000 == 0 and tick > 0:
             self.event_bus.truncate_log(keep_last_n=50000)
 
-    def _capture_system_checkpoints(self, tick: int) -> list[tuple[Any, Any]]:
-        """Capture explicit checkpoints for systems scheduled on this tick."""
-        checkpoints: list[tuple[Any, Any]] = []
-        for _, frequency, system in self._systems:
-            if tick % frequency != 0:
-                continue
-            snapshot = getattr(system, "snapshot_state", None)
-            if callable(snapshot):
-                checkpoints.append((system, snapshot()))
-        return checkpoints
-
     def _copy_world_for_tick(self) -> WorldState:
         """Create an isolated candidate using immutable entity registries."""
         candidate = copy.copy(self.world)
@@ -212,11 +214,59 @@ class SimulationEngine:
         return candidate
 
     def _restore_system_checkpoints(
-        self, checkpoints: list[tuple[Any, Any]]
-    ) -> None:
-        """Restore explicit system checkpoints after a failed candidate tick."""
-        for system, checkpoint in reversed(checkpoints):
-            system.restore_state(checkpoint)
+        self, checkpoints: list[tuple[str, Any, Any]]
+    ) -> list[dict[str, str]]:
+        """Attempt every explicit checkpoint restore and report any failures."""
+        failures: list[dict[str, str]] = []
+        for name, system, checkpoint in reversed(checkpoints):
+            try:
+                system.restore_state(checkpoint)
+            except Exception as error:
+                failures.append({"system": name, "error": str(error)})
+        return failures
+
+    def _abort_tick(
+        self,
+        *,
+        tick: int,
+        system_name: str,
+        error: Exception,
+        checkpoints: list[tuple[str, Any, Any]],
+        module_random_state: object,
+        phase: str = "update",
+    ) -> NoReturn:
+        """Unwind a failed candidate tick without masking its original error."""
+        rollback_errors = self._restore_system_checkpoints(checkpoints)
+        random.setstate(module_random_state)
+        self._running = False
+
+        event_data: dict[str, Any] = {
+            "system": system_name,
+            "error": str(error),
+        }
+        if phase != "update":
+            event_data["phase"] = phase
+        if rollback_errors:
+            event_data["rollback_errors"] = rollback_errors
+
+        self.event_bus.emit(Event(
+            tick=tick,
+            event_type="system.error",
+            data=event_data,
+        ))
+
+        action = "checkpoint failed" if phase == "checkpoint" else "failed"
+        rollback_detail = ""
+        if rollback_errors:
+            failures = ", ".join(
+                f"{item['system']}: {item['error']}" for item in rollback_errors
+            )
+            rollback_detail = f"; rollback failed for {failures}"
+
+        raise SimulationSystemError(
+            f"System {system_name!r} {action} at tick {tick}: "
+            f"{error}{rollback_detail}"
+        ) from error
 
     def get_stats(self) -> dict:
         """Current simulation statistics."""

@@ -18,7 +18,7 @@ from src.agents.agent import Agent
 from src.agents.factory import create_founder_population
 from src.agents.personality import AgentPersonality
 from src.engine.event_bus import Event, EventBus
-from src.engine.simulation import SimulationEngine
+from src.engine.simulation import SimulationEngine, SimulationSystemError
 from src.engine.world_state import WorldState
 from src.systems.death import DeathSystem
 from src.systems.need_decay import NeedDecaySystem
@@ -131,6 +131,100 @@ def test_failed_tick_restores_module_random_state() -> None:
             engine.step()
 
         assert random.getstate() == expected_random_state
+    finally:
+        random.setstate(original_random_state)
+
+
+def test_checkpoint_capture_failure_uses_the_tick_error_boundary() -> None:
+    class SnapshotFails:
+        def snapshot_state(self):
+            random.random()
+            raise ValueError("snapshot failed")
+
+        def restore_state(self, snapshot) -> None:
+            pass
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            raise AssertionError("update must not run")
+
+    original_random_state = random.getstate()
+    try:
+        random.seed(59)
+        expected_random_state = random.getstate()
+        event_bus = EventBus()
+        engine = SimulationEngine(WorldState(seed=59), event_bus)
+        engine.register_system("snapshot-fails", 1, SnapshotFails())
+
+        with pytest.raises(
+            SimulationSystemError,
+            match="checkpoint failed.*snapshot failed",
+        ) as raised:
+            engine.step()
+
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert random.getstate() == expected_random_state
+        assert engine.get_stats()["running"] is False
+        assert event_bus.get_log()[0].data == {
+            "system": "snapshot-fails",
+            "error": "snapshot failed",
+            "phase": "checkpoint",
+        }
+    finally:
+        random.setstate(original_random_state)
+
+
+def test_restore_failure_does_not_mask_the_original_system_error() -> None:
+    class RestorableSystem:
+        def __init__(self) -> None:
+            self.draws: list[float] = []
+
+        def snapshot_state(self):
+            return list(self.draws)
+
+        def restore_state(self, snapshot) -> None:
+            self.draws = snapshot
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            self.draws.append(random.random())
+
+    class RestoreFails:
+        def snapshot_state(self):
+            return None
+
+        def restore_state(self, snapshot) -> None:
+            raise RuntimeError("restore failed")
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            random.random()
+            raise ValueError("update failed")
+
+    original_random_state = random.getstate()
+    try:
+        random.seed(61)
+        expected_random_state = random.getstate()
+        restorable = RestorableSystem()
+        event_bus = EventBus()
+        engine = SimulationEngine(WorldState(seed=61), event_bus)
+        engine.register_system("restorable", 1, restorable)
+        engine.register_system("restore-fails", 1, RestoreFails())
+
+        with pytest.raises(
+            SimulationSystemError,
+            match="update failed.*rollback failed",
+        ) as raised:
+            engine.step()
+
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert restorable.draws == []
+        assert random.getstate() == expected_random_state
+        assert engine.get_stats()["running"] is False
+        assert event_bus.get_log()[0].data == {
+            "system": "restore-fails",
+            "error": "update failed",
+            "rollback_errors": [
+                {"system": "restore-fails", "error": "restore failed"},
+            ],
+        }
     finally:
         random.setstate(original_random_state)
 
