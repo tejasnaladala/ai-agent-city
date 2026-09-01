@@ -6,6 +6,7 @@ that persist across ticks while respecting the immutable Agent architecture.
 
 from __future__ import annotations
 
+import copy
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -170,6 +171,21 @@ class LearningSystem:
         self._rng = random.Random(seed)
         self.learners: dict[str, AgentLearnerState] = {}
         self._snapshots: dict[str, dict] = {}
+
+    def snapshot_state(self) -> tuple[object, dict, dict]:
+        """Capture learner state for simulation tick rollback."""
+        return (
+            self._rng.getstate(),
+            copy.deepcopy(self.learners),
+            copy.deepcopy(self._snapshots),
+        )
+
+    def restore_state(self, snapshot: tuple[object, dict, dict]) -> None:
+        """Restore learner state after an aborted simulation tick."""
+        rng_state, learners, snapshots = snapshot
+        self._rng.setstate(rng_state)
+        self.learners = learners
+        self._snapshots = snapshots
 
     def _ensure_learner(self, agent_id: str) -> AgentLearnerState:
         if agent_id not in self.learners:

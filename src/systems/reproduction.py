@@ -23,6 +23,14 @@ class ReproductionSystem:
     def __init__(self, rng: random.Random | None = None) -> None:
         self._rng = rng if rng is not None else random
 
+    def snapshot_state(self) -> object:
+        """Capture the injected random stream before a candidate tick."""
+        return self._rng.getstate()
+
+    def restore_state(self, snapshot: object) -> None:
+        """Restore the injected random stream after an aborted tick."""
+        self._rng.setstate(snapshot)
+
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
         from ..engine.event_bus import Event
 
@@ -60,6 +68,7 @@ class ReproductionSystem:
             partner = world.agents.get(parent_a.social.partner_id)
             if (
                 not partner
+                or partner.identity.agent_id == parent_a.identity.agent_id
                 or not self._eligible_for_reproduction(partner)
                 or partner.social.partner_id != parent_a.identity.agent_id
             ):

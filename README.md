@@ -93,8 +93,15 @@ coverage, and lint tools.
 `Agent` is a frozen dataclass composed of eight frozen components. Systems replace an agent
 in `WorldState` rather than mutating that agent in place. `SimulationEngine` schedules systems
 by tick frequency and records events through `EventBus`. A system exception emits one
-`system.error` event and aborts the tick; failed simulations no longer continue with partial
-state while appearing successful.
+`system.error` event and aborts the tick. Registry replacements and staged events commit only
+after every scheduled system succeeds. Module-level randomness is restored on failure, and
+stateful systems can participate in rollback by implementing both `snapshot_state()` and
+`restore_state(snapshot)`.
+
+The rollback boundary is explicit: custom systems must treat registered entity values as
+immutable and replace them in the world registries. A system that mutates nested dictionaries,
+lists, or external resources in place is responsible for its own checkpoint implementation.
+Events reach the public bus and its subscribers only after the candidate world commits.
 
 The command-line runtime registers these systems:
 

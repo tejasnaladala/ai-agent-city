@@ -8,9 +8,9 @@ Follows the tiered update schedule from the architecture doc.
 from __future__ import annotations
 
 import copy
+import random
 import time
-import types
-from typing import Any
+from typing import Any, NoReturn
 
 from .event_bus import Event, EventBus
 from .world_state import WorldState
@@ -20,14 +20,8 @@ class SimulationSystemError(RuntimeError):
     """Raised when a registered system cannot complete its tick."""
 
 
-class _BufferedEventBus:
-    """Collect tick events until the corresponding world state commits."""
-
-    def __init__(self) -> None:
-        self.events: list[Event] = []
-
-    def emit(self, event: Event) -> None:
-        self.events.append(event)
+class _BufferedEventBus(EventBus):
+    """Provide the EventBus API while staging a tick's events for commit."""
 
 
 class SimulationEngine:
@@ -59,6 +53,17 @@ class SimulationEngine:
             frequency: Run every N ticks (1=every tick, 10=every 10 ticks, etc.)
             system: Object with an update(world, tick, event_bus) method
         """
+        if isinstance(frequency, bool) or not isinstance(frequency, int) or frequency <= 0:
+            raise ValueError("frequency must be a positive integer")
+
+        snapshot = getattr(system, "snapshot_state", None)
+        restore = getattr(system, "restore_state", None)
+        if callable(snapshot) != callable(restore):
+            raise ValueError(
+                "systems must implement both snapshot_state() and restore_state(), "
+                "or neither"
+            )
+
         self._systems.append((name, frequency, system))
         self._systems.sort(key=lambda s: s[1])  # Run frequent systems first
 
@@ -101,11 +106,14 @@ class SimulationEngine:
         self._running = True
         ticks_run = 0
 
-        while self._running and ticks_run < max_ticks:
-            self._run_tick()
-            ticks_run += 1
-            if condition(self.world):
-                break
+        try:
+            while self._running and ticks_run < max_ticks:
+                self._run_tick()
+                ticks_run += 1
+                if condition(self.world):
+                    break
+        finally:
+            self._running = False
 
         return ticks_run
 
@@ -121,7 +129,25 @@ class SimulationEngine:
         """Execute one simulation tick."""
         tick = self.world.current_tick
         candidate_world = self._copy_world_for_tick()
-        system_states = self._snapshot_system_states()
+        module_random_state = random.getstate()
+        system_checkpoints: list[tuple[str, Any, Any]] = []
+        for name, frequency, system in self._systems:
+            if tick % frequency != 0:
+                continue
+            snapshot = getattr(system, "snapshot_state", None)
+            if callable(snapshot):
+                try:
+                    checkpoint = snapshot()
+                except Exception as error:
+                    self._abort_tick(
+                        tick=tick,
+                        system_name=name,
+                        error=error,
+                        checkpoints=system_checkpoints,
+                        module_random_state=module_random_state,
+                        phase="checkpoint",
+                    )
+                system_checkpoints.append((name, system, checkpoint))
         staged_events = _BufferedEventBus()
 
         # Emit tick start event
@@ -136,17 +162,14 @@ class SimulationEngine:
             if tick % frequency == 0:
                 try:
                     system.update(candidate_world, tick, staged_events)
-                except Exception as e:
-                    self._restore_system_states(system_states)
-                    self._running = False
-                    self.event_bus.emit(Event(
+                except Exception as error:
+                    self._abort_tick(
                         tick=tick,
-                        event_type="system.error",
-                        data={"system": name, "error": str(e)},
-                    ))
-                    raise SimulationSystemError(
-                        f"System {name!r} failed at tick {tick}: {e}"
-                    ) from e
+                        system_name=name,
+                        error=error,
+                        checkpoints=system_checkpoints,
+                        module_random_state=module_random_state,
+                    )
 
         # Emit tick end event
         staged_events.emit(Event(
@@ -157,7 +180,7 @@ class SimulationEngine:
 
         self.world.__dict__.clear()
         self.world.__dict__.update(candidate_world.__dict__)
-        self.event_bus.emit_many(staged_events.events)
+        self.event_bus.emit_many(staged_events.get_log())
 
         # Fire callbacks
         for callback in self._tick_callbacks:
@@ -172,18 +195,6 @@ class SimulationEngine:
         # Periodic memory management
         if tick % 10000 == 0 and tick > 0:
             self.event_bus.truncate_log(keep_last_n=50000)
-
-    def _snapshot_system_states(self) -> list[dict[str, Any] | None]:
-        """Copy mutable system state while preserving shared RNG relationships."""
-        states = [getattr(system, "__dict__", None) for _, _, system in self._systems]
-        module_memo = {
-            id(value): value
-            for state in states
-            if state is not None
-            for value in state.values()
-            if isinstance(value, types.ModuleType)
-        }
-        return copy.deepcopy(states, module_memo)
 
     def _copy_world_for_tick(self) -> WorldState:
         """Create an isolated candidate using immutable entity registries."""
@@ -202,13 +213,60 @@ class SimulationEngine:
         candidate.config = copy.deepcopy(self.world.config)
         return candidate
 
-    def _restore_system_states(self, states: list[dict[str, Any] | None]) -> None:
-        """Restore systems after a failed candidate tick."""
-        for (_, _, system), state in zip(self._systems, states, strict=True):
-            if state is None:
-                continue
-            system.__dict__.clear()
-            system.__dict__.update(state)
+    def _restore_system_checkpoints(
+        self, checkpoints: list[tuple[str, Any, Any]]
+    ) -> list[dict[str, str]]:
+        """Attempt every explicit checkpoint restore and report any failures."""
+        failures: list[dict[str, str]] = []
+        for name, system, checkpoint in reversed(checkpoints):
+            try:
+                system.restore_state(checkpoint)
+            except Exception as error:
+                failures.append({"system": name, "error": str(error)})
+        return failures
+
+    def _abort_tick(
+        self,
+        *,
+        tick: int,
+        system_name: str,
+        error: Exception,
+        checkpoints: list[tuple[str, Any, Any]],
+        module_random_state: object,
+        phase: str = "update",
+    ) -> NoReturn:
+        """Unwind a failed candidate tick without masking its original error."""
+        rollback_errors = self._restore_system_checkpoints(checkpoints)
+        random.setstate(module_random_state)
+        self._running = False
+
+        event_data: dict[str, Any] = {
+            "system": system_name,
+            "error": str(error),
+        }
+        if phase != "update":
+            event_data["phase"] = phase
+        if rollback_errors:
+            event_data["rollback_errors"] = rollback_errors
+
+        self.event_bus.emit(Event(
+            tick=tick,
+            event_type="system.error",
+            data=event_data,
+        ))
+
+        action = "checkpoint failed" if phase == "checkpoint" else "failed"
+        rollback_detail = ""
+        if rollback_errors:
+            failures = ", ".join(
+                f"{item['system']}: {item['error']}" for item in rollback_errors
+            )
+            rollback_detail = f"; rollback failed for {failures}"
+
+        raise SimulationSystemError(
+            f"System {system_name!r} {action} at tick {tick}: "
+            f"{error}{rollback_detail}"
+        ) from error
 
     def get_stats(self) -> dict:
         """Current simulation statistics."""

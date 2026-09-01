@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import sys
+import threading
 from collections import Counter
 from dataclasses import replace
 
@@ -17,7 +18,7 @@ from src.agents.agent import Agent
 from src.agents.factory import create_founder_population
 from src.agents.personality import AgentPersonality
 from src.engine.event_bus import Event, EventBus
-from src.engine.simulation import SimulationEngine
+from src.engine.simulation import SimulationEngine, SimulationSystemError
 from src.engine.world_state import WorldState
 from src.systems.death import DeathSystem
 from src.systems.need_decay import NeedDecaySystem
@@ -82,6 +83,14 @@ def test_failed_tick_rolls_back_state_events_rng_and_stops_the_engine() -> None:
             self.draws.append(self.rng.random())
             event_bus.emit(Event(tick=tick, event_type="domain.partial", data={}))
 
+        def snapshot_state(self):
+            return self.rng.getstate(), list(self.draws)
+
+        def restore_state(self, snapshot) -> None:
+            rng_state, draws = snapshot
+            self.rng.setstate(rng_state)
+            self.draws = draws
+
     class BrokenSystem:
         def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
             raise ValueError("broken after mutation")
@@ -101,6 +110,164 @@ def test_failed_tick_rolls_back_state_events_rng_and_stops_the_engine() -> None:
     assert mutating.rng.random() == pytest.approx(random.Random(7).random())
     assert [event.event_type for event in event_bus.get_log()] == ["system.error"]
     assert engine.get_stats()["running"] is False
+
+
+def test_failed_tick_restores_module_random_state() -> None:
+    class BrokenSystem:
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            raise ValueError("broken after lifecycle randomness")
+
+    original_random_state = random.getstate()
+    try:
+        random.seed(29)
+        expected_random_state = random.getstate()
+        agent = create_founder_population(1, rng=random.Random(29))[0]
+        world = WorldState(seed=29, agents={agent.identity.agent_id: agent})
+        engine = SimulationEngine(world, EventBus())
+        engine.register_system("death", 1, DeathSystem())
+        engine.register_system("broken", 1, BrokenSystem())
+
+        with pytest.raises(RuntimeError, match="broken.*tick 0"):
+            engine.step()
+
+        assert random.getstate() == expected_random_state
+    finally:
+        random.setstate(original_random_state)
+
+
+def test_checkpoint_capture_failure_uses_the_tick_error_boundary() -> None:
+    class SnapshotFails:
+        def snapshot_state(self):
+            random.random()
+            raise ValueError("snapshot failed")
+
+        def restore_state(self, snapshot) -> None:
+            pass
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            raise AssertionError("update must not run")
+
+    original_random_state = random.getstate()
+    try:
+        random.seed(59)
+        expected_random_state = random.getstate()
+        event_bus = EventBus()
+        engine = SimulationEngine(WorldState(seed=59), event_bus)
+        engine.register_system("snapshot-fails", 1, SnapshotFails())
+
+        with pytest.raises(
+            SimulationSystemError,
+            match="checkpoint failed.*snapshot failed",
+        ) as raised:
+            engine.step()
+
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert random.getstate() == expected_random_state
+        assert engine.get_stats()["running"] is False
+        assert event_bus.get_log()[0].data == {
+            "system": "snapshot-fails",
+            "error": "snapshot failed",
+            "phase": "checkpoint",
+        }
+    finally:
+        random.setstate(original_random_state)
+
+
+def test_restore_failure_does_not_mask_the_original_system_error() -> None:
+    class RestorableSystem:
+        def __init__(self) -> None:
+            self.draws: list[float] = []
+
+        def snapshot_state(self):
+            return list(self.draws)
+
+        def restore_state(self, snapshot) -> None:
+            self.draws = snapshot
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            self.draws.append(random.random())
+
+    class RestoreFails:
+        def snapshot_state(self):
+            return None
+
+        def restore_state(self, snapshot) -> None:
+            raise RuntimeError("restore failed")
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            random.random()
+            raise ValueError("update failed")
+
+    original_random_state = random.getstate()
+    try:
+        random.seed(61)
+        expected_random_state = random.getstate()
+        restorable = RestorableSystem()
+        event_bus = EventBus()
+        engine = SimulationEngine(WorldState(seed=61), event_bus)
+        engine.register_system("restorable", 1, restorable)
+        engine.register_system("restore-fails", 1, RestoreFails())
+
+        with pytest.raises(
+            SimulationSystemError,
+            match="update failed.*rollback failed",
+        ) as raised:
+            engine.step()
+
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert restorable.draws == []
+        assert random.getstate() == expected_random_state
+        assert engine.get_stats()["running"] is False
+        assert event_bus.get_log()[0].data == {
+            "system": "restore-fails",
+            "error": "update failed",
+            "rollback_errors": [
+                {"system": "restore-fails", "error": "restore failed"},
+            ],
+        }
+    finally:
+        random.setstate(original_random_state)
+
+
+def test_system_with_unpickleable_state_can_run_without_checkpointing() -> None:
+    class LockingSystem:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            with self.lock:
+                world.config["ran"] = True
+
+    engine = SimulationEngine(WorldState(seed=31), EventBus())
+    engine.register_system("locking", 1, LockingSystem())
+
+    engine.step()
+
+    assert engine.world.config == {"ran": True}
+    assert engine.world.current_tick == 1
+
+
+def test_systems_receive_a_complete_buffered_event_bus() -> None:
+    class BatchEventSystem:
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            event_bus.emit_many([
+                Event(tick=tick, event_type="domain.first", data={}),
+                Event(tick=tick, event_type="domain.second", data={}),
+            ])
+            assert len(event_bus.get_log()) == 3
+
+    event_bus = EventBus()
+    engine = SimulationEngine(WorldState(seed=37), event_bus)
+    engine.register_system("batch-events", 1, BatchEventSystem())
+
+    engine.step()
+
+    assert [event.event_type for event in event_bus.get_log()] == [
+        "tick.start",
+        "domain.first",
+        "domain.second",
+        "tick.end",
+    ]
 
 
 def test_need_decay_deaths_are_reported_exactly_once() -> None:
@@ -188,6 +355,33 @@ def test_chained_deaths_conserve_cash_in_the_same_update() -> None:
     assert world.agents[heir.identity.agent_id].economy.cash == pytest.approx(110)
 
 
+def test_death_clears_the_surviving_partners_relationship() -> None:
+    class CertainDeathSystem(DeathSystem):
+        def _should_die(self, agent) -> bool:
+            return agent.identity.agent_id == deceased.identity.agent_id
+
+    deceased, survivor = create_founder_population(2, rng=random.Random(41))
+    deceased = deceased.with_social(
+        deceased.social.with_partner(survivor.identity.agent_id)
+    )
+    survivor = survivor.with_social(
+        survivor.social.with_partner(deceased.identity.agent_id)
+    )
+    world = WorldState(
+        seed=41,
+        agents={
+            deceased.identity.agent_id: deceased,
+            survivor.identity.agent_id: survivor,
+        },
+    )
+
+    CertainDeathSystem(rng=random.Random(41)).update(
+        world, tick=100, event_bus=EventBus()
+    )
+
+    assert world.agents[survivor.identity.agent_id].social.partner_id is None
+
+
 def test_reproduction_requires_both_partners_to_be_eligible() -> None:
     class CertainReproductionSystem(ReproductionSystem):
         def _should_reproduce(self, parent_a, parent_b, world) -> bool:
@@ -238,6 +432,33 @@ def test_reproduction_requires_both_partners_to_be_eligible() -> None:
     assert event_bus.get_log(event_type="agent.born") == []
 
 
+def test_reproduction_rejects_self_partnerships() -> None:
+    class CertainReproductionSystem(ReproductionSystem):
+        def _should_reproduce(self, parent_a, parent_b, world) -> bool:
+            return True
+
+    agent = create_founder_population(1, rng=random.Random(43))[0]
+    agent = replace(
+        agent,
+        biology=replace(
+            agent.biology,
+            age_ticks=6000,
+            lifecycle_stage="adult",
+            fertility=1.0,
+        ),
+        social=replace(agent.social, partner_id=agent.identity.agent_id),
+    )
+    world = WorldState(seed=43, agents={agent.identity.agent_id: agent})
+    event_bus = EventBus()
+
+    CertainReproductionSystem(rng=random.Random(43)).update(
+        world, tick=1000, event_bus=event_bus
+    )
+
+    assert set(world.agents) == {agent.identity.agent_id}
+    assert event_bus.get_log(event_type="agent.born") == []
+
+
 def test_founder_constructor_accepts_an_isolated_random_generator() -> None:
     assert "rng" in inspect.signature(Agent.create_founder).parameters
     personality = AgentPersonality.random(random.Random(23))
@@ -250,6 +471,63 @@ def test_founder_constructor_accepts_an_isolated_random_generator() -> None:
     )
 
     assert first == second
+
+
+def test_register_system_rejects_nonpositive_frequency() -> None:
+    engine = SimulationEngine(WorldState(seed=47), EventBus())
+
+    with pytest.raises(ValueError, match="frequency"):
+        engine.register_system("never", 0, object())
+
+
+def test_register_system_rejects_an_incomplete_checkpoint_protocol() -> None:
+    class SnapshotOnlySystem:
+        def snapshot_state(self):
+            return None
+
+        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
+            pass
+
+    engine = SimulationEngine(WorldState(seed=49), EventBus())
+
+    with pytest.raises(ValueError, match="both snapshot_state.*restore_state"):
+        engine.register_system("snapshot-only", 1, SnapshotOnlySystem())
+
+
+def test_run_until_resets_running_state() -> None:
+    engine = SimulationEngine(WorldState(seed=53), EventBus())
+
+    ticks_run = engine.run_until(
+        lambda world: world.current_tick == 1,
+        max_ticks=2,
+    )
+
+    assert ticks_run == 1
+    assert engine.get_stats()["running"] is False
+
+
+def test_packaged_demo_formats_unassigned_professions() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "examples.run_demo",
+            "--population",
+            "1",
+            "--ticks",
+            "0",
+            "--seed",
+            "7",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "unassigned" in result.stdout
 
 
 def test_profession_choice_does_not_claim_employment_without_an_employer() -> None:

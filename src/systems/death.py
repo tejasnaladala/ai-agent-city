@@ -48,6 +48,7 @@ class DeathSystem:
         self._finalized_deaths.add(agent_id)
 
         self._handle_inheritance(deceased, world, tick, event_bus)
+        self._clear_surviving_partner_link(deceased, world)
         cause = deceased.biology.cause_of_death or self._determine_cause(deceased)
         event_bus.emit(Event(
             tick=tick,
@@ -60,6 +61,16 @@ class DeathSystem:
             },
             source_agent_id=agent_id,
         ))
+
+    def snapshot_state(self) -> tuple[object, set[str]]:
+        """Capture lifecycle bookkeeping and the injected random stream."""
+        return self._rng.getstate(), self._finalized_deaths.copy()
+
+    def restore_state(self, snapshot: tuple[object, set[str]]) -> None:
+        """Restore lifecycle bookkeeping after an aborted tick."""
+        rng_state, finalized_deaths = snapshot
+        self._rng.setstate(rng_state)
+        self._finalized_deaths = finalized_deaths
 
     def _should_die(self, agent) -> bool:
         death_prob = self.BASE_DEATH_RATE
@@ -118,4 +129,21 @@ class DeathSystem:
             current = world.agents[deceased.identity.agent_id]
             world.agents[deceased.identity.agent_id] = current.with_economy(
                 current.economy.add_cash(-deceased.economy.cash)
+            )
+
+    @staticmethod
+    def _clear_surviving_partner_link(deceased, world) -> None:
+        """Release a living partner after inheritance has been processed."""
+        partner_id = deceased.social.partner_id
+        if partner_id is None:
+            return
+
+        partner = world.agents.get(partner_id)
+        if (
+            partner is not None
+            and partner.biology.is_alive
+            and partner.social.partner_id == deceased.identity.agent_id
+        ):
+            world.agents[partner_id] = partner.with_social(
+                partner.social.without_partner()
             )

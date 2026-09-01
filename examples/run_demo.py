@@ -100,7 +100,8 @@ def main() -> None:
 
     print("\nprofessions held:")
     for name, count in sorted(m["professions"].items(), key=lambda kv: -kv[1]):
-        print(f"  {name:<16} {count}")
+        display_name = name or "unassigned"
+        print(f"  {display_name:<16} {count}")
 
 
 if __name__ == "__main__":
