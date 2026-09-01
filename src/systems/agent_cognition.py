@@ -17,7 +17,26 @@ class AgentCognitionSystem:
     """
 
     def __init__(self, learning_system=None):
+        if learning_system is not None:
+            snapshot = getattr(learning_system, "snapshot_state", None)
+            restore = getattr(learning_system, "restore_state", None)
+            if not callable(snapshot) or not callable(restore):
+                raise ValueError(
+                    "learning_system must implement snapshot_state() and "
+                    "restore_state()"
+                )
         self._learning_system = learning_system
+
+    def snapshot_state(self):
+        """Delegate rollback state to the optional learning system."""
+        if self._learning_system is None:
+            return None
+        return self._learning_system.snapshot_state()
+
+    def restore_state(self, snapshot) -> None:
+        """Restore the optional learning system after an aborted tick."""
+        if self._learning_system is not None:
+            self._learning_system.restore_state(snapshot)
 
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
         from ..agents.cognition import AgentCognition

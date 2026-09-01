@@ -43,6 +43,10 @@ class AgentSocial:
         """Return a new social state paired with the given partner."""
         return replace(self, partner_id=partner_id)
 
+    def without_partner(self) -> AgentSocial:
+        """Return a new social state with no current partner."""
+        return replace(self, partner_id=None)
+
     def with_child(self, child_id: str) -> AgentSocial:
         """Return a new social state with a child appended to the kinship list."""
         if child_id in self.children_ids:

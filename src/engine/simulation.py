@@ -8,8 +8,8 @@ Follows the tiered update schedule from the architecture doc.
 from __future__ import annotations
 
 import copy
+import random
 import time
-import types
 from typing import Any
 
 from .event_bus import Event, EventBus
@@ -20,14 +20,8 @@ class SimulationSystemError(RuntimeError):
     """Raised when a registered system cannot complete its tick."""
 
 
-class _BufferedEventBus:
-    """Collect tick events until the corresponding world state commits."""
-
-    def __init__(self) -> None:
-        self.events: list[Event] = []
-
-    def emit(self, event: Event) -> None:
-        self.events.append(event)
+class _BufferedEventBus(EventBus):
+    """Provide the EventBus API while staging a tick's events for commit."""
 
 
 class SimulationEngine:
@@ -59,6 +53,17 @@ class SimulationEngine:
             frequency: Run every N ticks (1=every tick, 10=every 10 ticks, etc.)
             system: Object with an update(world, tick, event_bus) method
         """
+        if isinstance(frequency, bool) or not isinstance(frequency, int) or frequency <= 0:
+            raise ValueError("frequency must be a positive integer")
+
+        snapshot = getattr(system, "snapshot_state", None)
+        restore = getattr(system, "restore_state", None)
+        if callable(snapshot) != callable(restore):
+            raise ValueError(
+                "systems must implement both snapshot_state() and restore_state(), "
+                "or neither"
+            )
+
         self._systems.append((name, frequency, system))
         self._systems.sort(key=lambda s: s[1])  # Run frequent systems first
 
@@ -101,11 +106,14 @@ class SimulationEngine:
         self._running = True
         ticks_run = 0
 
-        while self._running and ticks_run < max_ticks:
-            self._run_tick()
-            ticks_run += 1
-            if condition(self.world):
-                break
+        try:
+            while self._running and ticks_run < max_ticks:
+                self._run_tick()
+                ticks_run += 1
+                if condition(self.world):
+                    break
+        finally:
+            self._running = False
 
         return ticks_run
 
@@ -121,7 +129,8 @@ class SimulationEngine:
         """Execute one simulation tick."""
         tick = self.world.current_tick
         candidate_world = self._copy_world_for_tick()
-        system_states = self._snapshot_system_states()
+        module_random_state = random.getstate()
+        system_checkpoints = self._capture_system_checkpoints(tick)
         staged_events = _BufferedEventBus()
 
         # Emit tick start event
@@ -137,7 +146,8 @@ class SimulationEngine:
                 try:
                     system.update(candidate_world, tick, staged_events)
                 except Exception as e:
-                    self._restore_system_states(system_states)
+                    self._restore_system_checkpoints(system_checkpoints)
+                    random.setstate(module_random_state)
                     self._running = False
                     self.event_bus.emit(Event(
                         tick=tick,
@@ -157,7 +167,7 @@ class SimulationEngine:
 
         self.world.__dict__.clear()
         self.world.__dict__.update(candidate_world.__dict__)
-        self.event_bus.emit_many(staged_events.events)
+        self.event_bus.emit_many(staged_events.get_log())
 
         # Fire callbacks
         for callback in self._tick_callbacks:
@@ -173,17 +183,16 @@ class SimulationEngine:
         if tick % 10000 == 0 and tick > 0:
             self.event_bus.truncate_log(keep_last_n=50000)
 
-    def _snapshot_system_states(self) -> list[dict[str, Any] | None]:
-        """Copy mutable system state while preserving shared RNG relationships."""
-        states = [getattr(system, "__dict__", None) for _, _, system in self._systems]
-        module_memo = {
-            id(value): value
-            for state in states
-            if state is not None
-            for value in state.values()
-            if isinstance(value, types.ModuleType)
-        }
-        return copy.deepcopy(states, module_memo)
+    def _capture_system_checkpoints(self, tick: int) -> list[tuple[Any, Any]]:
+        """Capture explicit checkpoints for systems scheduled on this tick."""
+        checkpoints: list[tuple[Any, Any]] = []
+        for _, frequency, system in self._systems:
+            if tick % frequency != 0:
+                continue
+            snapshot = getattr(system, "snapshot_state", None)
+            if callable(snapshot):
+                checkpoints.append((system, snapshot()))
+        return checkpoints
 
     def _copy_world_for_tick(self) -> WorldState:
         """Create an isolated candidate using immutable entity registries."""
@@ -202,13 +211,12 @@ class SimulationEngine:
         candidate.config = copy.deepcopy(self.world.config)
         return candidate
 
-    def _restore_system_states(self, states: list[dict[str, Any] | None]) -> None:
-        """Restore systems after a failed candidate tick."""
-        for (_, _, system), state in zip(self._systems, states, strict=True):
-            if state is None:
-                continue
-            system.__dict__.clear()
-            system.__dict__.update(state)
+    def _restore_system_checkpoints(
+        self, checkpoints: list[tuple[Any, Any]]
+    ) -> None:
+        """Restore explicit system checkpoints after a failed candidate tick."""
+        for system, checkpoint in reversed(checkpoints):
+            system.restore_state(checkpoint)
 
     def get_stats(self) -> dict:
         """Current simulation statistics."""
