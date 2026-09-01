@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import random
-import uuid
 
 from .agent import Agent
 from .biology import AgentBiology
 from .economy import AgentEconomy
 from .goals import AgentGoals
-from .identity import AgentIdentity
+from .identity import AgentIdentity, generate_agent_id
 from .needs import AgentNeeds
 from .personality import AgentPersonality
 from .skills import AgentSkills
@@ -34,7 +33,11 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
-def create_founder_population(count: int, tick: int = 0) -> list[Agent]:
+def create_founder_population(
+    count: int,
+    tick: int = 0,
+    rng: random.Random | None = None,
+) -> list[Agent]:
     """Create the founding population of the city.
 
     Generates adults with random personalities, talents, and 1-2
@@ -47,27 +50,28 @@ def create_founder_population(count: int, tick: int = 0) -> list[Agent]:
     Returns:
         A list of newly created adult Agent instances.
     """
+    source = rng if rng is not None else random
     agents: list[Agent] = []
 
     for i in range(count):
-        name = random.choice(NAMES) + f"_{i}"
-        personality = AgentPersonality.random()
+        name = source.choice(NAMES) + f"_{i}"
+        personality = AgentPersonality.random(rng)
 
         # Random skill talents
         talents = {
-            skill: _clamp(random.gauss(0.5, 0.15), 0.1, 1.0)
+            skill: _clamp(source.gauss(0.5, 0.15), 0.1, 1.0)
             for skill in ALL_SKILLS
         }
 
         # Start with 1-2 skills partially trained
-        starting_skills = random.sample(list(ALL_SKILLS), k=random.randint(1, 2))
-        skills = {s: random.uniform(0.2, 0.5) for s in starting_skills}
+        starting_skills = source.sample(ALL_SKILLS, k=source.randint(1, 2))
+        skills = {s: source.uniform(0.2, 0.5) for s in starting_skills}
 
-        age = random.randint(4000, 10000)
+        age = source.randint(4000, 10000)
 
         agent = Agent(
             identity=AgentIdentity(
-                agent_id=str(uuid.uuid4()),
+                agent_id=generate_agent_id(rng),
                 name=name,
                 birth_tick=tick - age,
                 parent_ids=None,
@@ -76,17 +80,17 @@ def create_founder_population(count: int, tick: int = 0) -> list[Agent]:
             biology=AgentBiology(
                 age_ticks=age,
                 lifecycle_stage="adult",
-                health=random.uniform(0.8, 1.0),
+                health=source.uniform(0.8, 1.0),
                 max_health=1.0,
-                fertility=random.uniform(0.5, 0.9),
+                fertility=source.uniform(0.5, 0.9),
                 is_alive=True,
                 cause_of_death=None,
             ),
             needs=AgentNeeds(
-                food=random.uniform(0.6, 1.0),
-                water=random.uniform(0.6, 1.0),
+                food=source.uniform(0.6, 1.0),
+                water=source.uniform(0.6, 1.0),
                 shelter=0.3,
-                rest=random.uniform(0.5, 1.0),
+                rest=source.uniform(0.5, 1.0),
                 health=1.0,
                 safety=0.8,
                 belonging=0.3,
@@ -96,7 +100,7 @@ def create_founder_population(count: int, tick: int = 0) -> list[Agent]:
             personality=personality,
             skills=AgentSkills(skills=skills, experience={}, talent=talents),
             economy=AgentEconomy(
-                cash=random.uniform(50, 200),
+                cash=source.uniform(50, 200),
                 assets=(),
                 employer_id=None,
                 profession=None,

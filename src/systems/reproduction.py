@@ -20,6 +20,9 @@ class ReproductionSystem:
     MIN_REPRODUCTION_AGE = 5500
     MAX_CHILDREN_PER_HOUSEHOLD = 4
 
+    def __init__(self, rng: random.Random | None = None) -> None:
+        self._rng = rng if rng is not None else random
+
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
         from ..engine.event_bus import Event
 
@@ -29,7 +32,7 @@ class ReproductionSystem:
 
         # Phase 1: Partnership formation
         singles = [a for a in adults if a.social.partner_id is None]
-        random.shuffle(singles)
+        self._rng.shuffle(singles)
 
         for i in range(0, len(singles) - 1, 2):
             a, b = singles[i], singles[i + 1]
@@ -47,20 +50,25 @@ class ReproductionSystem:
                 ))
 
         # Phase 2: Reproduction
-        partnered = [a for a in world.get_alive_agents()
-                     if a.social.partner_id is not None
-                     and a.biology.age_ticks >= self.MIN_REPRODUCTION_AGE
-                     and a.biology.fertility > 0.3
-                     and len(a.social.children_ids) < self.MAX_CHILDREN_PER_HOUSEHOLD]
+        partnered = [
+            agent for agent in world.get_alive_agents()
+            if self._eligible_for_reproduction(agent)
+        ]
+        processed_pairs: set[frozenset[str]] = set()
 
         for parent_a in partnered:
             partner = world.agents.get(parent_a.social.partner_id)
-            if not partner or not partner.biology.is_alive:
+            if (
+                not partner
+                or not self._eligible_for_reproduction(partner)
+                or partner.social.partner_id != parent_a.identity.agent_id
+            ):
                 continue
 
-            # Already processed this pair from the other side
-            if parent_a.identity.agent_id > partner.identity.agent_id:
+            pair = frozenset((parent_a.identity.agent_id, partner.identity.agent_id))
+            if pair in processed_pairs:
                 continue
+            processed_pairs.add(pair)
 
             if self._should_reproduce(parent_a, partner, world):
                 child = self._create_child(parent_a, partner, tick)
@@ -83,6 +91,15 @@ class ReproductionSystem:
                     source_agent_id=child.identity.agent_id,
                 ))
 
+    def _eligible_for_reproduction(self, agent) -> bool:
+        return (
+            agent.biology.is_alive
+            and agent.social.partner_id is not None
+            and agent.biology.age_ticks >= self.MIN_REPRODUCTION_AGE
+            and agent.biology.fertility > 0.3
+            and len(agent.social.children_ids) < self.MAX_CHILDREN_PER_HOUSEHOLD
+        )
+
     def _compatible(self, a, b) -> bool:
         """Check if two agents would form a partnership."""
         # Personality compatibility
@@ -92,14 +109,17 @@ class ReproductionSystem:
         # Economic compatibility
         income_ratio = min(a.economy.cash, b.economy.cash) / max(a.economy.cash, b.economy.cash, 1)
 
-        return compat > 0.4 and income_ratio > 0.2 and random.random() < 0.3
+        return compat > 0.4 and income_ratio > 0.2 and self._rng.random() < 0.3
 
     def _should_reproduce(self, parent_a, parent_b, world) -> bool:
         """Decide if a couple should have a child."""
         avg_food = (parent_a.needs.food + parent_b.needs.food) / 2
         avg_health = (parent_a.biology.health + parent_b.biology.health) / 2
         combined_cash = parent_a.economy.cash + parent_b.economy.cash
-        existing_children = len(parent_a.social.children_ids)
+        existing_children = max(
+            len(parent_a.social.children_ids),
+            len(parent_b.social.children_ids),
+        )
 
         desire = (
             (1 if avg_food > 0.5 else 0.2) * 0.3 +
@@ -109,9 +129,9 @@ class ReproductionSystem:
         )
 
         fertility = min(parent_a.biology.fertility, parent_b.biology.fertility)
-        return random.random() < desire * fertility * 0.15
+        return self._rng.random() < desire * fertility * 0.15
 
     def _create_child(self, parent_a, parent_b, tick):
         """Create a new child agent inheriting traits from both parents."""
         from ..agents.agent import Agent
-        return Agent.create_child(parent_a, parent_b, tick)
+        return Agent.create_child(parent_a, parent_b, tick, rng=self._rng)

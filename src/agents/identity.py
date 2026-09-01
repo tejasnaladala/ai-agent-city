@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import random
+import uuid
 from dataclasses import dataclass
+
+
+def generate_agent_id(rng: random.Random | None = None) -> str:
+    """Return a UUID4, using ``rng`` when deterministic identity is required."""
+    if rng is None:
+        return str(uuid.uuid4())
+    return str(uuid.UUID(int=rng.getrandbits(128), version=4))
 
 
 @dataclass(frozen=True, slots=True)

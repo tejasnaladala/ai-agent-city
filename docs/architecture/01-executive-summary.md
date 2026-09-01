@@ -1,5 +1,8 @@
 # AI Agent City — Executive Summary & System Vision
 
+> **Scope note:** This is a design vision, not a description of the current executable
+> runtime. See the repository README for verified implementation status and known gaps.
+
 ## What AI Agent City Is
 
 AI Agent City is a **persistent autonomous civilization simulator** where every resident

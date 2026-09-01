@@ -11,10 +11,15 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
-def _inherit_trait(parent_a_val: float, parent_b_val: float) -> float:
+def _inherit_trait(
+    parent_a_val: float,
+    parent_b_val: float,
+    rng: random.Random | None = None,
+) -> float:
     """Midpoint of parents plus gaussian noise, clamped to [0, 1]."""
+    source = rng if rng is not None else random
     midpoint = (parent_a_val + parent_b_val) / 2.0
-    noise = random.gauss(0.0, 0.1)
+    noise = source.gauss(0.0, 0.1)
     return _clamp(midpoint + noise)
 
 
@@ -63,14 +68,16 @@ class AgentPersonality:
         return _clamp(self.conscientiousness * (1.0 - self.agreeableness * 0.3))
 
     @classmethod
-    def random(cls) -> AgentPersonality:
+    def random(cls, rng: random.Random | None = None) -> AgentPersonality:
         """Generate a random personality with gaussian-distributed traits.
 
         Traits are drawn from a normal distribution centered at 0.5
         with standard deviation 0.15, clamped to [0.05, 0.95].
         """
+        source = rng if rng is not None else random
+
         def _rand_trait() -> float:
-            return _clamp(random.gauss(0.5, 0.15), 0.05, 0.95)
+            return _clamp(source.gauss(0.5, 0.15), 0.05, 0.95)
 
         return cls(
             openness=_rand_trait(),
@@ -82,7 +89,10 @@ class AgentPersonality:
 
     @classmethod
     def inherit(
-        cls, parent_a: AgentPersonality, parent_b: AgentPersonality
+        cls,
+        parent_a: AgentPersonality,
+        parent_b: AgentPersonality,
+        rng: random.Random | None = None,
     ) -> AgentPersonality:
         """Create a child personality by blending two parents with gaussian noise.
 
@@ -90,17 +100,17 @@ class AgentPersonality:
         clamped to [0, 1].
         """
         return cls(
-            openness=_inherit_trait(parent_a.openness, parent_b.openness),
+            openness=_inherit_trait(parent_a.openness, parent_b.openness, rng),
             conscientiousness=_inherit_trait(
-                parent_a.conscientiousness, parent_b.conscientiousness
+                parent_a.conscientiousness, parent_b.conscientiousness, rng
             ),
             extraversion=_inherit_trait(
-                parent_a.extraversion, parent_b.extraversion
+                parent_a.extraversion, parent_b.extraversion, rng
             ),
             agreeableness=_inherit_trait(
-                parent_a.agreeableness, parent_b.agreeableness
+                parent_a.agreeableness, parent_b.agreeableness, rng
             ),
             neuroticism=_inherit_trait(
-                parent_a.neuroticism, parent_b.neuroticism
+                parent_a.neuroticism, parent_b.neuroticism, rng
             ),
         )
