@@ -30,10 +30,10 @@ export function HUD() {
   return (
     <>
       {/* Top stat bar */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
-        <div className="glass-card flex items-center gap-6 px-6 py-3">
+      <div className="absolute top-3 inset-x-3 z-10 sm:top-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2">
+        <div className="glass-card grid grid-cols-3 gap-x-2 gap-y-2 px-2 py-2 sm:flex sm:items-center sm:gap-6 sm:px-6 sm:py-3">
           {/* Connection indicator */}
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center justify-center gap-2">
             <div
               className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 shadow-[0_0_6px_#4ade80]' : 'bg-red-400 shadow-[0_0_6px_#f87171]'}`}
             />
@@ -133,15 +133,15 @@ function StatBlock({
   color?: string;
 }) {
   return (
-    <div className="flex flex-col items-center min-w-[72px]">
-      <span className={`stat-value text-lg ${color}`}>{value}</span>
+    <div className="flex min-w-0 flex-col items-center sm:min-w-[72px]">
+      <span className={`stat-value text-sm sm:text-lg ${color}`}>{value}</span>
       <span className="stat-label">{label}</span>
     </div>
   );
 }
 
 function Divider() {
-  return <div className="w-px h-8 bg-white/10" />;
+  return <div className="hidden h-8 w-px bg-white/10 sm:block" />;
 }
 
 function OverlayToggle({

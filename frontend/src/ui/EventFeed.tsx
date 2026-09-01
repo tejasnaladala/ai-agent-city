@@ -30,7 +30,7 @@ export function EventFeed() {
   const visibleEvents = events.slice(-20);
 
   return (
-    <div className="absolute top-20 right-4 z-10 w-80">
+    <div className="absolute top-32 right-3 left-3 z-10 sm:top-20 sm:right-4 sm:left-auto sm:w-80">
       <div className="glass-card p-3">
         {/* Header */}
         <div className="flex items-center justify-between mb-2 px-1">

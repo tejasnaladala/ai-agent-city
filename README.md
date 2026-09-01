@@ -1,7 +1,8 @@
 # AI Agent City
 
-AI Agent City is a deterministic, fixed-timestep agent-based simulation prototype written
-in Python. Residents have immutable component state for identity, biology, needs,
+AI Agent City is a fixed-timestep agent-based simulation prototype written in Python. Its
+CLI and documented demo are deterministic for a supplied seed. Residents have immutable
+component state for identity, biology, needs,
 personality, skills, finances, relationships, and goals. Registered systems age residents,
 decay and satisfy needs, select professions, form partnerships, create children, and record
 deaths.
@@ -26,15 +27,15 @@ is intentionally omitted because it depends on the machine.
 
 seed=7  founders=50  ticks=10000
 final population: 50  (max generation 0)
-total events: 23464
+total events: 23443
 
 event breakdown (excluding tick.start/tick.end):
   agent.ate                  3259
-  agent.starving              104
+  agent.starving               88
   agent.profession_selected    50
-  agent.partnered              25
-  agent.born                   13
-  agent.died                   13
+  agent.partnered              24
+  agent.born                   11
+  agent.died                   11
 
 professions held:
   doctor           10
@@ -55,12 +56,13 @@ These numbers need careful interpretation:
   do not currently consume inventory or place market orders.
 - A selected profession is an occupation label, not a job at a firm. The default runtime
   creates no firms, employer links, or wage transfers.
-- Thirteen children are born and thirteen residents die in this run. There is no dependent
+- Eleven children are born and eleven residents die in this run. There is no dependent
   care system yet, so no generation-one resident remains alive at tick 10,000.
 
 The integration suite runs the same long seed twice and compares all non-timing summary
-fields. Random identity generation and every stochastic lifecycle system share an isolated,
-seeded random stream.
+fields. The CLI/demo path shares an isolated, seeded random stream across identity generation
+and stochastic lifecycle systems. Direct constructors accept an RNG when reproducibility is
+required; omitting it intentionally uses process or operating-system randomness.
 
 ## Quickstart
 
@@ -156,7 +158,7 @@ tests/         unit and executable integration coverage
 
 ## Reproducibility and security boundary
 
-- CI runs on Python 3.12 and Node 20, installs the frontend with `npm ci`, builds a wheel,
+- CI runs on Python 3.12 and Node 24, installs the frontend with `npm ci`, builds a wheel,
   installs it, and executes the console script outside the checkout.
 - GitHub Actions are pinned to exact revisions, use read-only repository permissions, and do
   not persist checkout credentials.

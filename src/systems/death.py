@@ -25,7 +25,8 @@ class DeathSystem:
         self._finalized_deaths: set[str] = set()
 
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
-        for agent_id, agent in list(world.agents.items()):
+        for agent_id in list(world.agents):
+            agent = world.agents[agent_id]
             if not agent.biology.is_alive:
                 self._finalize_death(agent, world, tick, event_bus)
                 continue

@@ -50,20 +50,25 @@ class ReproductionSystem:
                 ))
 
         # Phase 2: Reproduction
-        partnered = [a for a in world.get_alive_agents()
-                     if a.social.partner_id is not None
-                     and a.biology.age_ticks >= self.MIN_REPRODUCTION_AGE
-                     and a.biology.fertility > 0.3
-                     and len(a.social.children_ids) < self.MAX_CHILDREN_PER_HOUSEHOLD]
+        partnered = [
+            agent for agent in world.get_alive_agents()
+            if self._eligible_for_reproduction(agent)
+        ]
+        processed_pairs: set[frozenset[str]] = set()
 
         for parent_a in partnered:
             partner = world.agents.get(parent_a.social.partner_id)
-            if not partner or not partner.biology.is_alive:
+            if (
+                not partner
+                or not self._eligible_for_reproduction(partner)
+                or partner.social.partner_id != parent_a.identity.agent_id
+            ):
                 continue
 
-            # Already processed this pair from the other side
-            if parent_a.identity.agent_id > partner.identity.agent_id:
+            pair = frozenset((parent_a.identity.agent_id, partner.identity.agent_id))
+            if pair in processed_pairs:
                 continue
+            processed_pairs.add(pair)
 
             if self._should_reproduce(parent_a, partner, world):
                 child = self._create_child(parent_a, partner, tick)
@@ -86,6 +91,15 @@ class ReproductionSystem:
                     source_agent_id=child.identity.agent_id,
                 ))
 
+    def _eligible_for_reproduction(self, agent) -> bool:
+        return (
+            agent.biology.is_alive
+            and agent.social.partner_id is not None
+            and agent.biology.age_ticks >= self.MIN_REPRODUCTION_AGE
+            and agent.biology.fertility > 0.3
+            and len(agent.social.children_ids) < self.MAX_CHILDREN_PER_HOUSEHOLD
+        )
+
     def _compatible(self, a, b) -> bool:
         """Check if two agents would form a partnership."""
         # Personality compatibility
@@ -102,7 +116,10 @@ class ReproductionSystem:
         avg_food = (parent_a.needs.food + parent_b.needs.food) / 2
         avg_health = (parent_a.biology.health + parent_b.biology.health) / 2
         combined_cash = parent_a.economy.cash + parent_b.economy.cash
-        existing_children = len(parent_a.social.children_ids)
+        existing_children = max(
+            len(parent_a.social.children_ids),
+            len(parent_b.social.children_ids),
+        )
 
         desire = (
             (1 if avg_food > 0.5 else 0.2) * 0.3 +
