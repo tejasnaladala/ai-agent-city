@@ -20,6 +20,9 @@ class ReproductionSystem:
     MIN_REPRODUCTION_AGE = 5500
     MAX_CHILDREN_PER_HOUSEHOLD = 4
 
+    def __init__(self, rng: random.Random | None = None) -> None:
+        self._rng = rng if rng is not None else random
+
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
         from ..engine.event_bus import Event
 
@@ -29,7 +32,7 @@ class ReproductionSystem:
 
         # Phase 1: Partnership formation
         singles = [a for a in adults if a.social.partner_id is None]
-        random.shuffle(singles)
+        self._rng.shuffle(singles)
 
         for i in range(0, len(singles) - 1, 2):
             a, b = singles[i], singles[i + 1]
@@ -92,7 +95,7 @@ class ReproductionSystem:
         # Economic compatibility
         income_ratio = min(a.economy.cash, b.economy.cash) / max(a.economy.cash, b.economy.cash, 1)
 
-        return compat > 0.4 and income_ratio > 0.2 and random.random() < 0.3
+        return compat > 0.4 and income_ratio > 0.2 and self._rng.random() < 0.3
 
     def _should_reproduce(self, parent_a, parent_b, world) -> bool:
         """Decide if a couple should have a child."""
@@ -109,9 +112,9 @@ class ReproductionSystem:
         )
 
         fertility = min(parent_a.biology.fertility, parent_b.biology.fertility)
-        return random.random() < desire * fertility * 0.15
+        return self._rng.random() < desire * fertility * 0.15
 
     def _create_child(self, parent_a, parent_b, tick):
         """Create a new child agent inheriting traits from both parents."""
         from ..agents.agent import Agent
-        return Agent.create_child(parent_a, parent_b, tick)
+        return Agent.create_child(parent_a, parent_b, tick, rng=self._rng)

@@ -43,19 +43,21 @@ def run(population: int, ticks: int, seed: int) -> dict:
         ReproductionSystem,
     )
 
-    random.seed(seed)
+    rng = random.Random(seed)
     world = WorldState(seed=seed)
     event_bus = EventBus()
-    for agent in create_founder_population(population, tick=0):
+    for agent in create_founder_population(population, tick=0, rng=rng):
         world.agents[agent.identity.agent_id] = agent
 
     engine = SimulationEngine(world, event_bus)
     engine.register_system("need_decay", 1, NeedDecaySystem())
     engine.register_system("cognition", 1, AgentCognitionSystem())
     engine.register_system("production", 10, ProductionUpdateSystem())
-    engine.register_system("profession_assignment", 100, ProfessionAssignmentSystem())
-    engine.register_system("death", 100, DeathSystem())
-    engine.register_system("reproduction", 1000, ReproductionSystem())
+    engine.register_system(
+        "profession_assignment", 100, ProfessionAssignmentSystem(rng=rng)
+    )
+    engine.register_system("death", 100, DeathSystem(rng=rng))
+    engine.register_system("reproduction", 1000, ReproductionSystem(rng=rng))
 
     start = time.perf_counter()
     engine.run(ticks=ticks, target_tps=0)

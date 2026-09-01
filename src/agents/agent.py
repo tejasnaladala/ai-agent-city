@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import random
-import uuid
 from dataclasses import dataclass, replace
 
 from .biology import AgentBiology
 from .economy import AgentEconomy
 from .goals import AgentGoals
-from .identity import AgentIdentity
+from .identity import AgentIdentity, generate_agent_id
 from .needs import AgentNeeds
 from .personality import AgentPersonality
 from .skills import AgentSkills
@@ -106,7 +105,7 @@ class Agent:
 
         return cls(
             identity=AgentIdentity(
-                agent_id=str(uuid.uuid4()),
+                agent_id=generate_agent_id(),
                 name=name,
                 birth_tick=tick - age,
                 parent_ids=None,
@@ -166,6 +165,7 @@ class Agent:
         parent_a: Agent,
         parent_b: Agent,
         tick: int,
+        rng: random.Random | None = None,
     ) -> Agent:
         """Create a child agent with traits inherited from two parents.
 
@@ -178,11 +178,12 @@ class Agent:
             A new child Agent with inherited personality and talent.
         """
         personality = AgentPersonality.inherit(
-            parent_a.personality, parent_b.personality
+            parent_a.personality, parent_b.personality, rng
         )
+        source = rng if rng is not None else random
 
         # Inherit skill talents — average of parents plus noise
-        all_skills = set(parent_a.skills.talent) | set(parent_b.skills.talent)
+        all_skills = sorted(set(parent_a.skills.talent) | set(parent_b.skills.talent))
         talents: dict[str, float] = {}
         for skill in all_skills:
             parent_avg = (
@@ -190,17 +191,17 @@ class Agent:
                 + parent_b.skills.get_talent(skill)
             ) / 2.0
             talents[skill] = _clamp(
-                parent_avg + random.gauss(0, 0.15), 0.1, 1.0
+                parent_avg + source.gauss(0, 0.15), 0.1, 1.0
             )
 
         generation = (
             max(parent_a.identity.generation, parent_b.identity.generation) + 1
         )
-        name = f"Child_{str(uuid.uuid4())[:8]}"
+        name = f"Child_{generate_agent_id(rng)[:8]}"
 
         return cls(
             identity=AgentIdentity(
-                agent_id=str(uuid.uuid4()),
+                agent_id=generate_agent_id(rng),
                 name=name,
                 birth_tick=tick,
                 parent_ids=(

@@ -1,178 +1,168 @@
 # AI Agent City
 
-A civilization simulator where every resident is an autonomous agent with needs, skills, a personality, and an economic role. Agents decide what to do each tick, take jobs, earn wages, eat, age, partner up, and have children. There is no central script telling the city how to behave. The population-level patterns you see come out of thousands of small individual decisions.
+AI Agent City is a deterministic, fixed-timestep agent-based simulation prototype written
+in Python. Residents have immutable component state for identity, biology, needs,
+personality, skills, finances, relationships, and goals. Registered systems age residents,
+decay and satisfy needs, select professions, form partnerships, create children, and record
+deaths.
 
-The engine is a fixed-timestep entity-component-system in pure Python. It runs about **1,700 ticks per second single-threaded** with 50 agents and produces a stable, self-feeding economy over tens of thousands of ticks.
+The current runtime uses symbolic rules. It does not call a language model, a paid API, or
+any remote service. The architecture documents describe a much larger system vision; they
+are not a statement that every designed subsystem is implemented or integrated.
 
-## What you actually see when you run it
+## Verified demo
 
-Run the bundled demo (seed 7, 50 founders, 10,000 ticks):
+After installation, run the canonical seed:
 
 ```bash
 python -m examples.run_demo
 ```
 
-```
+With Python 3.12, the event and profession counts below are deterministic. Wall-clock speed
+is intentionally omitted because it depends on the machine.
+
+```text
+[Simulation] Ran 10000 ticks
+
 seed=7  founders=50  ticks=10000
-ran in 5.7s (1770 ticks/sec)
 final population: 50  (max generation 0)
-total events: 23430
+total events: 23464
 
 event breakdown (excluding tick.start/tick.end):
-  agent.ate            3265
-  agent.starving       80
-  agent.employed       50
-  agent.partnered      25
-  agent.born           10
+  agent.ate                  3259
+  agent.starving              104
+  agent.profession_selected    50
+  agent.partnered              25
+  agent.born                   13
+  agent.died                   13
 
 professions held:
   doctor           10
-  craftsman        10
-  builder          7
-  farmer           6
-  engineer         5
-  trader           3
-  factory_worker   3
-  logistics        2
-  teacher          2
-  miner            2
+  engineer          8
+  miner             7
+  factory_worker    6
+  farmer            5
+  logistics         4
+  craftsman         4
+  builder           3
+  trader             2
+  teacher            1
 ```
 
-Two things are worth pointing out:
+These numbers need careful interpretation:
 
-- **The city reaches an equilibrium instead of dying.** Food is a depleting need; left alone, every agent starves. The reactive layer of agent cognition addresses hunger and thirst before they hit zero, so average food settles into a sawtooth around 0.31 to 0.39 and the population holds steady. Earlier in development this collapsed to zero by tick 2,600, because the cognition layer could only react to one critical need per tick and thirst kept crowding out hunger. The fix was to let an agent address every need that is below its emergency threshold in the same tick. That single change is the difference between a population that survives and one that goes extinct.
-- **Professions are chosen, not assigned.** Each agent scores all ten professions against its own skills, talents, and Big Five personality, then picks the best fit. Doctors and craftsmen come out most common on this seed because the scoring rewards their higher wages and the personality traits that suit them.
+- Critical food, water, and rest are restored by symbolic cognition actions. Those actions
+  do not currently consume inventory or place market orders.
+- A selected profession is an occupation label, not a job at a firm. The default runtime
+  creates no firms, employer links, or wage transfers.
+- Thirteen children are born and thirteen residents die in this run. There is no dependent
+  care system yet, so no generation-one resident remains alive at tick 10,000.
 
-The numbers above are reproducible. Change `--seed`, `--population`, or `--ticks` and you get a different but equally consistent run.
+The integration suite runs the same long seed twice and compares all non-timing summary
+fields. Random identity generation and every stochastic lifecycle system share an isolated,
+seeded random stream.
 
 ## Quickstart
 
-Requires Python 3.12+.
+Requires Python 3.12 or newer.
 
 ```bash
-# install (editable, with dev tools)
-pip install -e ".[dev]"
+python -m venv .venv
+python -m pip install -e ".[dev]"
 
-# run the interactive simulation with a live status readout
-python -m src.main --population 50 --ticks 10000 --seed 7 --tps 0
+# Installed console entry point
+agent-city --population 50 --ticks 10000 --seed 7 --tps 0
 
-# run the headless demo that prints the summary above
+# Deterministic headless summary
 python -m examples.run_demo
 
-# tests and lint
+# Verification
 pytest
-ruff check src tests
+ruff check src examples tests
 ```
 
-`--tps 0` runs as fast as the machine allows. A positive value rate-limits the loop so you can watch it tick by tick.
+`--tps 0` runs without rate limiting. A positive value sets a target tick rate.
 
-### 3D frontend (optional)
+The core package has no third-party runtime dependencies. The `dev` extra contains the test,
+coverage, and lint tools.
 
-A Three.js voxel renderer lives in `frontend/`. It connects to a WebSocket bridge, draws the city as a voxel scene, and shows agents, buildings, weather, and live metrics panels.
+## Runtime architecture
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+`Agent` is a frozen dataclass composed of eight frozen components. Systems replace an agent
+in `WorldState` rather than mutating that agent in place. `SimulationEngine` schedules systems
+by tick frequency and records events through `EventBus`. A system exception emits one
+`system.error` event and aborts the tick; failed simulations no longer continue with partial
+state while appearing successful.
 
-## How it works
+The command-line runtime registers these systems:
 
-The simulation is a tiered entity-component-system. Each agent is an immutable frozen dataclass composed of nine components (identity, biology, needs, personality, skills, economy, social, goals). Systems never mutate an agent in place; they compute a new agent and replace it in the world registry. That keeps state transitions explicit and makes the whole thing easy to reason about and test.
+| System | Frequency | Current behavior |
+|---|---:|---|
+| Need decay | 1 | Ages residents, decays needs, and applies critical-need health loss |
+| Agent cognition | 1 | Handles emergency needs, otherwise practices the selected profession or wanders |
+| Production update | 10 | Processes caller-supplied firms and ledgers; inert in the default runtime |
+| Profession selection | 100 | Scores profession labels from skills, talent, wage weight, and personality |
+| Death | 100 | Finalizes deaths from any system, emits one death event, and transfers cash to living heirs |
+| Status reporter | 100 | Prints population and aggregate health/food data in `agent-city` |
+| Reproduction | 1000 | Forms compatible pairs and creates children with inherited traits |
 
-```
-SimulationEngine (fixed-timestep loop)
-  │
-  ├── runs registered systems at tiered frequencies
-  │     every tick:    need decay, agent cognition
-  │     every 10:      production / wage payment
-  │     every 100:     profession assignment, death, status report
-  │     every 1000:    reproduction
-  │
-  ├── EventBus            append-only event log + pub/sub
-  └── WorldState          agent / building / firm registries, market, ledger
-```
-
-Eight systems make up the runtime:
-
-| System | Frequency | What it does |
-|---|---|---|
-| Need decay | every tick | Hunger, thirst, rest, and other needs fall; critical hunger or thirst drains health |
-| Agent cognition | every tick | Four-tier decision loop: reactive thresholds first, then plan execution |
-| Production | every 10 ticks | Firms pay wages through the ledger and produce goods |
-| Profession assignment | every 100 ticks | Unemployed adults score and choose a profession |
-| Death | every 100 ticks | Age, illness, and starvation kill agents; cash is split among heirs |
-| Status report | every 100 ticks | Prints population, average food and health, and headcount working |
-| Reproduction | every 1000 ticks | Compatible partners pair up and may have children who inherit traits |
-| Learning | every 10 ticks | Per-agent Q-learning with a replay buffer over a discretized state |
-
-### Agent cognition
-
-Cognition runs in tiers so the common case stays cheap:
-
-- **Reactive (every tick):** pure threshold checks. If food, water, rest, safety, or health drops below its emergency level, the agent acts on every breached need this tick.
-- **Plan execution:** with no urgent need, an agent with a profession goes to work and improves its skill; everyone else wanders.
-- **Strategic (every 100 ticks):** reads the agent's Q-table and tightens exploration once it has enough experience.
-
-The "creative" tier described in the design docs (full language-model reasoning for novel situations) is **not wired into the runtime**. The shipped cognition is symbolic and tabular. See the implemented-versus-planned table below.
-
-### Economy
-
-The economy is real, not decoration:
-
-- **Order-book market** (`src/economy/market.py`): a continuous double auction with buy and sell orders, price-time priority matching, order expiry by TTL, last-trade price, and rolling volume and price history. Price discovery is unit-tested.
-- **Ledger** (`src/economy/ledger.py`): double-entry transfers with insufficient-funds rejection, a system account for minting, and full transaction history.
-- **Labor market** (`src/economy/labor.py`): firms, job postings, skill-filtered hiring, and an unemployment-rate calculation.
-- **Indicators** (`src/economy/indicators.py`): aggregate economic measures computed from the ledger.
-
-Wages flow from firms to workers through the ledger on every production tick, and a paid worker's food and shelter needs improve. That is the loop that keeps the city fed.
-
-## Implemented vs. planned
-
-This repo started from an ambitious design doc (`docs/architecture/`). Here is an honest split of what runs today versus what is design only.
+## Component status
 
 | Capability | Status |
 |---|---|
-| Fixed-timestep ECS engine, event bus, tiered systems | Implemented |
-| Immutable agents with 9 components | Implemented |
-| Need decay, aging, lifecycle stages, death, inheritance | Implemented |
-| Profession choice from skills + personality | Implemented |
-| Order-book market, ledger, labor market, indicators | Implemented (unit-tested) |
-| Reproduction with trait inheritance across generations | Implemented |
-| Per-agent Q-learning with replay buffer | Implemented |
-| Three.js voxel frontend over a WebSocket bridge | Implemented |
-| Local language-model cognition for novel situations | Design only |
-| Local GPU policy networks (the `inference` extra) | Experimental, not wired in |
-| Emergent government, schools, hospitals as institutions | Design only |
+| Fixed-timestep engine, event bus, immutable agent updates | Integrated and tested |
+| Need decay, symbolic cognition, aging, death, cash inheritance | Integrated and tested |
+| Profession scoring and selection | Integrated; not connected to employers or payroll |
+| Partnership, birth, and trait inheritance | Integrated; dependent care is missing |
+| Order-book market, double-entry ledger, labor market, indicators | Implemented as standalone modules and unit-tested; not wired into the demo |
+| World map, resources, districts, construction models | Standalone modules; not wired into the demo |
+| Tabular learning and replay buffer | Prototype module; not registered by the runtime and does not control actions |
+| React/Three.js voxel interface | Build-checked prototype; no compatible WebSocket server ships in this tree |
+| Persistence or deterministic event replay | Design only |
+| Language-model cognition and GPU policy networks | Design only |
+| Emergent institutions and a causally closed economy | Design only |
 
-The `inference` optional dependency group (vLLM, PyTorch, transformers) is declared for the planned model-backed cognition but is not used by the current runtime. Treat it as experimental.
+## Frontend prototype
+
+The `frontend/` directory contains a Vite, React, and Three.js visualization shell. It compiles
+and renders its local voxel scene, but its client expects a simulation WebSocket at
+`ws://localhost:8765`, and this repository does not currently provide a compatible server.
+It should not be presented as an end-to-end live visualization.
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+The committed lockfile is used by CI. The Vite toolchain is kept on a patched release and
+`npm audit` is part of release verification.
 
 ## Project layout
 
-```
+```text
 src/
-  engine/      simulation loop, event bus, world state
-  agents/      9 immutable components + factory + tiered cognition
-  systems/     8 systems that advance the world each tick
-  economy/     order-book market, ledger, labor market, indicators
-  world/       tile grid, districts, A* pathfinding, resources
+  agents/      immutable agent components and symbolic cognition
+  engine/      simulation scheduler, event bus, and world state
+  systems/     runtime lifecycle and behavior systems
+  economy/     standalone market, ledger, labor, production, and indicators
+  world/       standalone map, resource, district, and construction models
 examples/
-  run_demo.py  reproducible headless run that prints the metrics above
-frontend/      Three.js + React 19 voxel renderer (TypeScript)
-docs/          architecture and design notes
-tests/         pytest suite
+  run_demo.py  deterministic headless run and summary
+frontend/      buildable Three.js visualization prototype
+docs/          system vision and implementation plans
+tests/         unit and executable integration coverage
 ```
 
-Roughly 4,600 lines of Python in `src/`, 2,800 lines of TypeScript in the frontend, and a 52-test pytest suite covering needs, biology, skills, personality, cognition, the market, the ledger, and the labor market.
+## Reproducibility and security boundary
 
-## Tests
-
-```bash
-pytest            # 52 tests
-ruff check src tests
-```
-
-The Python suite runs in well under a second and the lint is clean.
+- CI runs on Python 3.12 and Node 20, installs the frontend with `npm ci`, builds a wheel,
+  installs it, and executes the console script outside the checkout.
+- GitHub Actions are pinned to exact revisions, use read-only repository permissions, and do
+  not persist checkout credentials.
+- The Python runtime opens no sockets, reads no secrets, and makes no network requests.
+- The frontend is a local development artifact, not a hardened or authenticated network
+  service. Do not expose a development server to an untrusted network.
 
 ## License
 

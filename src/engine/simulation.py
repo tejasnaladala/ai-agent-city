@@ -14,6 +14,10 @@ from .event_bus import Event, EventBus
 from .world_state import WorldState
 
 
+class SimulationSystemError(RuntimeError):
+    """Raised when a registered system cannot complete its tick."""
+
+
 class SimulationEngine:
     """
     Core simulation loop. Orchestrates all subsystems.
@@ -115,12 +119,14 @@ class SimulationEngine:
                 try:
                     system.update(self.world, tick, self.event_bus)
                 except Exception as e:
-                    print(f"[Simulation] Error in {name} at tick {tick}: {e}")
                     self.event_bus.emit(Event(
                         tick=tick,
                         event_type="system.error",
                         data={"system": name, "error": str(e)},
                     ))
+                    raise SimulationSystemError(
+                        f"System {name!r} failed at tick {tick}: {e}"
+                    ) from e
 
         # Emit tick end event
         self.event_bus.emit(Event(

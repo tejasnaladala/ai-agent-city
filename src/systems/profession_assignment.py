@@ -30,6 +30,9 @@ class ProfessionAssignmentSystem:
     Frequency: 100 (every 100 ticks).
     """
 
+    def __init__(self, rng: random.Random | None = None) -> None:
+        self._rng = rng if rng is not None else random
+
     def update(self, world: "WorldState", tick: int, event_bus: "EventBus") -> None:
         from ..engine.event_bus import Event
 
@@ -52,7 +55,7 @@ class ProfessionAssignmentSystem:
 
                 event_bus.emit(Event(
                     tick=tick,
-                    event_type="agent.employed",
+                    event_type="agent.profession_selected",
                     data={
                         "name": agent.identity.name,
                         "profession": best_profession,
@@ -84,7 +87,7 @@ class ProfessionAssignmentSystem:
 
         if not scores:
             # Fallback: take any available low-skill job
-            return random.choice(["farmer", "miner", "logistics"])
+            return self._rng.choice(["farmer", "miner", "logistics"])
 
         return max(scores, key=scores.get)
 

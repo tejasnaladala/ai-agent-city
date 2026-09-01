@@ -33,101 +33,48 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--tps", type=float, default=10.0,
                         help="Target ticks per second (0=unlimited)")
-    parser.add_argument("--map-size", type=int, default=64, help="Map width/height in tiles")
-    parser.add_argument("--verbose", action="store_true", help="Print detailed tick info")
     args = parser.parse_args()
 
-    random.seed(args.seed)
+    rng = random.Random(args.seed)
     print("\n🏙️  AI Agent City v0.1.0")
     print(f"   Seed: {args.seed}")
     print(f"   Population: {args.population}")
-    print(f"   Map: {args.map_size}x{args.map_size}")
     print(f"   Ticks: {args.ticks}")
     print(f"   Target TPS: {args.tps}")
     print()
 
-    # Import here to avoid circular imports during module loading
-    from .engine.event_bus import Event, EventBus
+    from .agents.factory import create_founder_population
+    from .engine.event_bus import EventBus
     from .engine.simulation import SimulationEngine
     from .engine.world_state import WorldState
+    from .systems import (
+        AgentCognitionSystem,
+        DeathSystem,
+        NeedDecaySystem,
+        ProductionUpdateSystem,
+        ProfessionAssignmentSystem,
+        ReproductionSystem,
+        StatusReporterSystem,
+    )
 
-    # Initialize world
     world = WorldState(seed=args.seed)
     event_bus = EventBus()
+    founders = create_founder_population(args.population, tick=0, rng=rng)
+    for agent in founders:
+        world.agents[agent.identity.agent_id] = agent
+    print(f"✅ Created {len(founders)} founding agents")
 
-    # Create founding population
-    try:
-        from .agents.factory import create_founder_population
-        founders = create_founder_population(args.population, tick=0)
-        for agent in founders:
-            world.agents[agent.identity.agent_id] = agent
-        print(f"✅ Created {len(founders)} founding agents")
-    except ImportError as e:
-        print(f"⚠️  Agent module not ready: {e}")
-        print("   Running in skeleton mode (no agents)")
-
-    # Initialize simulation engine
     engine = SimulationEngine(world, event_bus)
-
-    # Register basic systems (more will be added as modules are built)
-    # For now, register a simple need decay system as proof-of-concept
-    class NeedDecaySystem:
-        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
-            for agent_id, agent in list(world.agents.items()):
-                if not agent.biology.is_alive:
-                    continue
-                new_needs = agent.needs.decay_one_tick()
-                new_agent = agent.with_needs(new_needs)
-                # Age the agent
-                new_bio = agent.biology.age_one_tick()
-                new_agent = new_agent.with_biology(new_bio)
-                world.agents[agent_id] = new_agent
-
-    class StatusReporter:
-        def update(self, world: WorldState, tick: int, event_bus: EventBus) -> None:
-            pop = world.population_count()
-            avg_food = 0
-            avg_health = 0
-            agents = world.get_alive_agents()
-            if agents:
-                avg_food = sum(a.needs.food for a in agents) / len(agents)
-                avg_health = sum(a.biology.health for a in agents) / len(agents)
-
-            if args.verbose or tick % 100 == 0:
-                print(
-                    f"  Tick {tick:>6d} | Pop: {pop:>4d} | "
-                    f"Avg Food: {avg_food:.2f} | Avg Health: {avg_health:.2f}"
-                )
-
-            event_bus.emit(Event(
-                tick=tick,
-                event_type="status.report",
-                data={"population": pop, "avg_food": avg_food, "avg_health": avg_health},
-            ))
-
-    try:
-        from .systems import (
-            AgentCognitionSystem,
-            DeathSystem,
-            NeedDecaySystem,
-            ProductionUpdateSystem,
-            ProfessionAssignmentSystem,
-            ReproductionSystem,
-            StatusReporterSystem,
-        )
-        engine.register_system("need_decay", 1, NeedDecaySystem())
-        engine.register_system("cognition", 1, AgentCognitionSystem())
-        engine.register_system("production", 10, ProductionUpdateSystem())
-        engine.register_system("profession_assignment", 100, ProfessionAssignmentSystem())
-        engine.register_system("death", 100, DeathSystem())
-        engine.register_system("status_reporter", 100, StatusReporterSystem())
-        engine.register_system("reproduction", 1000, ReproductionSystem())
-        print("✅ 7 simulation systems registered")
-    except Exception as e:
-        print(f"⚠️  Could not register all systems: {e}")
-        # Fallback to inline systems
-        engine.register_system("need_decay", 1, NeedDecaySystem())
-        engine.register_system("status_reporter", 10, StatusReporter())
+    engine.register_system("need_decay", 1, NeedDecaySystem())
+    engine.register_system("cognition", 1, AgentCognitionSystem())
+    engine.register_system("production", 10, ProductionUpdateSystem())
+    engine.register_system(
+        "profession_assignment", 100, ProfessionAssignmentSystem(rng=rng)
+    )
+    engine.register_system("death", 100, DeathSystem(rng=rng))
+    engine.register_system("status_reporter", 100, StatusReporterSystem())
+    engine.register_system("reproduction", 1000, ReproductionSystem(rng=rng))
+    print("✅ 7 simulation systems registered")
 
     # Run simulation
     print("\n🚀 Starting simulation...\n")
@@ -139,7 +86,7 @@ def main() -> None:
         print("\n\n⏸️  Simulation paused by user")
 
     elapsed = time.perf_counter() - start_time
-    actual_tps = args.ticks / elapsed if elapsed > 0 else 0
+    actual_tps = world.current_tick / elapsed if elapsed > 0 else 0
 
     print("\n📊 Simulation Complete")
     print(f"   Ticks: {world.current_tick}")
